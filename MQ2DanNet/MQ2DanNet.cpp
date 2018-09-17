@@ -110,8 +110,9 @@ public:
         return false;
     }
 
-    void SetPeer(const std::string& peer) { 
-        WriteChatf("MQ2DanNetType::SetPeer setting peer from %s to %s", Peer.c_str(), peer.c_str());
+    void SetPeer(const std::string& peer) {
+        if (Node::get().debugging())
+            WriteChatf("MQ2DanNetType::SetPeer setting peer from %s to %s", Peer.c_str(), peer.c_str());
         Peer = peer;
     }
 
@@ -129,7 +130,8 @@ BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR &Dest) {
     Dest.DWord = 1;
     Dest.Type = pDanNetType;
 
-    WriteChatf("MQ2DanNetType::dataDanNet Index %s", Index);
+    if (Node::get().debugging())
+        WriteChatf("MQ2DanNetType::dataDanNet Index %s", Index);
     if (!Index || Index[0] == '\0' || !Node::get().has_peer(Index))
         pDanNetType->SetPeer("");
     else
@@ -149,6 +151,18 @@ PLUGIN_API VOID DInfoCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             WriteChatf("MQ2DanNet: Set interface to %s", szParam);
         } else {
             WriteChatf("MQ2DanNet: Interfaces --\r\n%s", Node::get().get_interfaces());
+        }
+    } else if (szParam && !strcmp(szParam, "debug")) {
+        GetArg(szParam, szLine, 2);
+        if (szParam && !strcmp(szParam, "on")) {
+            Node::get().debugging(true);
+            WritePrivateProfileString("MQ2DanNet", "Debugging", "1", INIFileName);
+        } else if (szParam && !strcmp(szParam, "off")) {
+            Node::get().debugging(false);
+            WritePrivateProfileString("MQ2DanNet", "Debugging", "0", INIFileName);
+        } else {
+            Node::get().debugging(!Node::get().debugging());
+            WritePrivateProfileString("MQ2DanNet", "Debugging", Node::get().debugging() ? "1" : "0", INIFileName);
         }
     } else {
         WriteChatf("MQ2DanNet: %s", Node::get().get_info().c_str());
@@ -249,6 +263,8 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     Node::get().register_command<MQ2DanNet::Query>();
     Node::get().register_command<MQ2DanNet::Observe>();
     Node::get().register_command<MQ2DanNet::Update>();
+
+    Node::get().debugging(GetPrivateProfileInt("MQ2DanNet", "Debugging", 0, INIFileName) != 0);
 
     AddCommand("/dinfo", DInfoCommand);
     AddCommand("/djoin", DJoinCommand);

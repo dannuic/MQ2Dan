@@ -111,9 +111,11 @@ std::stringstream Query::pack(const std::string& request) {
             strcpy_s(szBuf, data.c_str());
             if (Result.Type && Result.Type->FromString(Result.VarPtr, szBuf)) {
                 Node::get().query_result(Node::Observation(Result, MQGetTickCount64()));
-                WriteChatf("%s : %s -- %llu (%llu)", type.c_str(), data.c_str(), Node::get().read(group).received, MQGetTickCount64());
+                if (Node::get().debugging())
+                    WriteChatf("%s : %s -- %llu (%llu)", type.c_str(), data.c_str(), Node::get().read(group).received, MQGetTickCount64());
             } else {
-                WriteChatf("%s : %s -- Failed to read data %llu.", type.c_str(), data.c_str(), MQGetTickCount64());
+                if (Node::get().debugging())
+                    WriteChatf("%s : %s -- Failed to read data %llu.", type.c_str(), data.c_str(), MQGetTickCount64());
             }
         } catch (std::runtime_error&) {
             DebugSpewAlways("MQ2DanNet::Query -- response -- Failed to deserialize.");
@@ -214,9 +216,11 @@ const bool Update::callback(std::stringstream&& args) {
         strcpy_s(szBuf, data.c_str());
         if (Result.Type && Result.Type->FromString(Result.VarPtr, szBuf)) {
             Node::get().update(group, Result);
-            WriteChatf("%s : %s -- %llu (%llu)", type.c_str(), data.c_str(), Node::get().read(group).received, MQGetTickCount64());
+            if (Node::get().debugging())
+                WriteChatf("%s : %s -- %llu (%llu)", type.c_str(), data.c_str(), Node::get().read(group).received, MQGetTickCount64());
         } else {
-            WriteChatf("%s : %s -- Failed to read data %llu.", type.c_str(), data.c_str(), MQGetTickCount64());
+            if (Node::get().debugging())
+                WriteChatf("%s : %s -- Failed to read data %llu.", type.c_str(), data.c_str(), MQGetTickCount64());
         }
     } catch (std::runtime_error&) {
         DebugSpewAlways("MQ2DanNet::Update -- failed to deserialize.");

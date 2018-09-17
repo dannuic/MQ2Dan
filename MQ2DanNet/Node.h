@@ -226,6 +226,8 @@ namespace MQ2DanNet {
         std::string _current_query; // for the Query data member
         Observation _query_result;
 
+        bool _debugging;
+
         // explicitly prevent copy/move operations.
         Node(const Node&) = delete;
         Node& operator=(const Node&) = delete;
@@ -246,6 +248,9 @@ namespace MQ2DanNet {
         // smartly reads/sets/clears _current_query
         Observation query(const std::string& query);
         void query_result(const Observation& obs);
+
+        bool debugging(bool debugging) { _debugging = debugging; return _debugging; }
+        bool debugging() { return _debugging; }
 
         void enter();
         void exit();
