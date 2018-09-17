@@ -1,0 +1,80 @@
+<class name = "zyre event" state = "stable">
+    <!--
+    Copyright (c) the Contributors as noted in the AUTHORS file.
+
+    This file is part of Zyre, an open-source framework for proximity-based
+    peer-to-peer applications -- See http://zyre.org.
+
+    This Source Code Form is subject to the terms of the Mozilla Public
+    License, v. 2.0. If a copy of the MPL was not distributed with this
+    file, You can obtain one at http://mozilla.org/MPL/2.0/.
+    -->
+    Parsing Zyre messages
+
+    <constructor>
+        Constructor: receive an event from the zyre node, wraps zyre_recv.
+        The event may be a control message (ENTER, EXIT, JOIN, LEAVE) or
+        data (WHISPER, SHOUT).
+        <argument name = "node" type = "zyre" />
+    </constructor>
+
+    <destructor>
+        Destructor; destroys an event instance
+    </destructor>
+
+    <method name = "type">
+        Returns event type, as printable uppercase string. Choices are:
+        "ENTER", "EXIT", "JOIN", "LEAVE", "EVASIVE", "WHISPER" and "SHOUT"
+        and for the local node: "STOP"
+        <return type = "string" />
+    </method>
+
+    <method name = "peer uuid">
+        Return the sending peer's uuid as a string
+        <return type = "string" />
+    </method>
+
+    <method name = "peer name">
+        Return the sending peer's public name as a string
+        <return type = "string" />
+    </method>
+
+    <method name = "peer addr">
+        Return the sending peer's ipaddress as a string
+        <return type = "string" />
+    </method>
+
+    <method name = "headers">
+        Returns the event headers, or NULL if there are none
+        <return type = "zhash" />
+    </method>
+
+    <method name = "header">
+        Returns value of a header from the message headers
+        obtained by ENTER. Return NULL if no value was found.
+        <argument name = "name" type = "string" />
+        <return type = "string" />
+    </method>
+
+    <method name = "group">
+        Returns the group name that a SHOUT event was sent to
+        <return type = "string" />
+    </method>
+
+    <method name = "msg">
+        Returns the incoming message payload; the caller can modify the
+        message but does not own it and should not destroy it.
+        <return type = "zmsg" />
+    </method>
+
+    <method name = "get msg">
+        Returns the incoming message payload, and pass ownership to the
+        caller. The caller must destroy the message when finished with it.
+        After called on the given event, further calls will return NULL.
+        <return type = "zmsg" fresh = "1" />
+    </method>
+
+    <method name = "print">
+        Print event to zsys log
+    </method>
+</class>

@@ -1,0 +1,13 @@
+<h1>Hello World!</h1>
+
+<script>
+var remote = require ('electron').remote;
+console.log (remote.getGlobal ('sharedObj').zyre_name);
+
+var ipcRenderer = require ('electron').ipcRenderer;
+ipcRenderer.send ('hello');
+
+document.write ('<p>zyre.name: ' + remote.getGlobal ('sharedObj').zyre_name + '</p>');
+document.write ('<p>electron.version: ' + process.versions.node + '</p>')
+document.write ('<p>V8 version: ' + process.versions.v8 + '</p>')
+</script>

@@ -1,0 +1,404 @@
+.#  This is a code generator built using the iMatix GSL code generation
+.#  language. See https://github.com/imatix/gsl for details. This script 
+.#  is licensed under MIT/X11.
+.#
+.output "../api/zsock_option.api"
+<!--
+******************************************************************
+*   GENERATED SOURCE CODE, DO NOT EDIT!!                         *
+*   TO CHANGE THIS FILE:                                         *
+*    - EDIT src/zsock_option.gsl and/or                          *
+*    - EDIT src/sockopts.xml     and then                        *
+*    - RUN 'make code'                                           *
+******************************************************************
+-->
+.function state(option)
+.  if defined(my.option.state)
+.    return " state = \"$(my.option.state)\""
+.  endif
+.  return ''
+.endfunction
+.macro runtime_check(version, option, return)
+.   if defined (my.option.major)
+.      my.major = my.option.major
+.   else
+.      my.major = my.version.major
+.   endif
+.   if defined (my.option.minor)
+.      my.minor = my.option.minor
+.   elsif defined (my.version.minor)
+.      my.minor = my.version.minor
+.   else
+.      my.minor = 0
+.   endif
+.   if defined (my.option.major_removed)
+.      my.major_removed = my.option.major_removed
+.   elsif defined (my.version.major_removed)
+.      my.major_removed = my.version.major_removed
+.   endif
+    int major, minor, patch;
+    zmq_version (&major, &minor, &patch);
+    if (ZMQ_MAKE_VERSION (major, minor, patch) < ZMQ_MAKE_VERSION ($(my.major), $(my.minor), 0)\
+.   if defined (my.major_removed)
+
+            || ZMQ_MAKE_VERSION (major, minor, patch) >= ZMQ_MAKE_VERSION ($(my.major_removed), 0, 0)\
+.   endif
+) {
+        zsys_error ("zsock $(my.option.name) option not supported by libzmq version %d.%d.%d, "
+            "run with libzmq >= $(my.major).$(my.minor).0\
+.   if defined (my.major_removed)
+ and < $(my.major_removed).0.0\
+.   endif
+\\n", major, minor, patch, NULL);
+.   if defined (my.return)
+        return $(my.return);
+.   else
+        return;
+.   endif
+    }
+.endmacro
+.# The bindings break against the latest version if a symbol cannot be found
+.for version where ! defined (major_removed)
+
+<!-- The following socket options are available in libzmq from version $(major).\
+.   if defined (.minor)
+$(minor).0 \
+.   else
+0.0 \
+.   endif
+.   if defined (.major_removed)
+to $(major_removed).0.0 \
+.   endif
+-->
+.   for option
+.       if ! defined (.minor)
+.           .minor = 0
+.       endif
+.       if defined (.major_removed)
+.           removed_string = " to $(major_removed).0.0"
+.       else
+.           removed_string = ""
+.       endif
+.       if mode = "rw" | mode = "r"
+
+<method name = "$(option.api_name:)" polymorphic = "1"$(state(option))>
+    Get socket option `$(option.name:)`.
+    Available from libzmq $(major).$(minor).0$(removed_string).
+    <return type = "$(option.api_type:)" fresh = "1" />
+</method>
+.       endif
+.       if mode = "rw" | mode = "w"
+
+<method name = "set $(option.api_name:)" polymorphic = "1"$(state(option))>
+    Set socket option `$(option.name:)`.
+    Available from libzmq $(major).$(minor).0$(removed_string).
+    <argument name = "$(option.api_name:)" type = "$(option.api_type:)" />
+</method>
+.       endif
+.       if type = "key"
+
+<method name = "set $(option.api_name:) bin" polymorphic = "1">
+    Set socket option `$(option.name:)` from 32-octet binary
+    Available from libzmq $(major).$(minor).0$(removed_string).
+    <argument name = "$(option.api_name:)" type = "buffer" />
+</method>
+.       endif
+.   endfor
+.endfor
+.output "../src/zsock_option.inc"
+/*  =========================================================================
+    zsock_option - get/set ZeroMQ socket options
+
+    ******************************************************************
+    *   GENERATED SOURCE CODE, DO NOT EDIT!!                         *
+    *   TO CHANGE THIS FILE:                                         *
+    *    - EDIT src/zsock_option.gsl and/or                          *
+    *    - EDIT src/zsock_option.xml and then                        *
+    *    - RUN 'make code'                                           *
+    ******************************************************************
+
+    Copyright (c) the Contributors as noted in the AUTHORS file.
+    This file is part of CZMQ, the high-level C binding for ZeroMQ:
+    http://czmq.zeromq.org.
+
+    This Source Code Form is subject to the terms of the Mozilla Public
+    License, v. 2.0. If a copy of the MPL was not distributed with this
+    file, You can obtain one at http://mozilla.org/MPL/2.0/.
+    =========================================================================
+*/
+
+.for version
+.       for option
+.       if mode = "rw" | mode = "w"
+//  --------------------------------------------------------------------------
+//  Set socket ZMQ_$(NAME) value
+//  *** GENERATED SOURCE CODE, DO NOT EDIT, SEE INSTRUCTIONS AT START ***
+
+void
+zsock_set_$(name) (void *self, $(ctype_const:) $(name))
+{
+    assert (self);
+.       if style = "macro"
+#   if defined (ZMQ_$(NAME))
+.       endif
+.       runtime_check (version, option)
+.           if count (restrict)
+.               for restrict
+.                   if first()
+.                       .open = "if ("
+.                   else
+.                       .open = "&&  "
+.                   endif
+.                   if last()
+.                       .close = ") {"
+.                   else
+.                       .close = ""
+.                   endif
+    $(open)zsock_type (self) != ZMQ_$(TYPE)$(close)
+.               endfor
+        printf ("ZMQ_$(NAME) is not valid on %s sockets\\n", zsys_sockname (zsock_type (self)));
+        assert (false);
+    }
+.           endif
+.           if defined (major_changed)
+#        if ZMQ_VERSION_MAJOR < $(major_changed)
+.           endif
+.           if type = "uint64"
+    uint64_t value = $(name);
+    int rc = zmq_setsockopt (zsock_resolve (self), ZMQ_$(NAME), &value, sizeof (uint64_t));
+.           elsif type = "int64"
+    int64_t value = $(name);
+    int rc = zmq_setsockopt (zsock_resolve (self), ZMQ_$(NAME), &value, sizeof (int64_t));
+.           elsif type = "uint32"
+    uint32_t value = $(name);
+    int rc = zmq_setsockopt (zsock_resolve (self), ZMQ_$(NAME), &value, sizeof (uint32_t));
+.           elsif type = "int"
+    int rc = zmq_setsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), sizeof (int));
+.           elsif type = "string" | type = "key"
+    int rc = zmq_setsockopt (zsock_resolve (self), ZMQ_$(NAME), $(name), strlen ($(name)));
+.           endif
+.           if defined (major_changed)
+#        else
+.           if type_new = "uint64"
+    uint64_t value = $(name);
+    int rc = zmq_setsockopt (zsock_resolve (self), ZMQ_$(NAME), &value, sizeof (uint64_t));
+.           elsif type_new = "int64"
+    int64_t value = $(name);
+    int rc = zmq_setsockopt (zsock_resolve (self), ZMQ_$(NAME), &value, sizeof (int64_t));
+.           elsif type_new = "uint32"
+    uint32_t value = $(name);
+    int rc = zmq_setsockopt (zsock_resolve (self), ZMQ_$(NAME), &value, sizeof (uint32_t));
+.           elsif type_new = "int"
+    int rc = zmq_setsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), sizeof (int));
+.           elsif type_new = "string" | type = "key"
+    int rc = zmq_setsockopt (zsock_resolve (self), ZMQ_$(NAME), $(name), strlen ($(name)));
+.           endif
+#        endif
+.           endif
+    assert (rc == 0 || zmq_errno () == ETERM);
+.       if style = "macro"
+#   endif
+.       endif
+}
+
+
+.# Generate additional set_xxx_bin method
+.if type = "key"
+//  --------------------------------------------------------------------------
+//  Set socket ZMQ_$(NAME) value from 32-octet binary
+//  *** GENERATED SOURCE CODE, DO NOT EDIT, SEE INSTRUCTIONS AT START ***
+
+void
+zsock_set_$(name)_bin (void *self, const byte *$(name))
+{
+.       if style = "macro"
+#   if defined (ZMQ_$(NAME))
+.       endif
+.       runtime_check (version, option)
+    int rc = zmq_setsockopt (zsock_resolve (self), ZMQ_$(NAME), $(name), 32);
+    assert (rc == 0 || zmq_errno () == ETERM);
+.       if style = "macro"
+#   endif
+.       endif
+}
+
+
+.endif
+.           endif
+.           if mode = "rw" | mode = "r"
+//  --------------------------------------------------------------------------
+//  Return socket ZMQ_$(NAME) value
+//  *** GENERATED SOURCE CODE, DO NOT EDIT, SEE INSTRUCTIONS AT START ***
+
+$(ctype:)
+zsock_$(name) (void *self)
+{
+    assert (self);
+.           if style = "macro"
+#   if defined (ZMQ_$(NAME))
+.           endif
+.       runtime_check (version, option, 0)
+.           if defined (major_changed)
+#        if ZMQ_VERSION_MAJOR < $(major_changed)
+.           endif
+.           if type = "uint64"
+    uint64_t $(name);
+    size_t option_len = sizeof (uint64_t);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), &option_len);
+.           elsif type = "int64"
+    int64_t $(name);
+    size_t option_len = sizeof (int64_t);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), &option_len);
+.           elsif type = "uint32"
+    uint32_t $(name);
+    size_t option_len = sizeof (uint32_t);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), &option_len);
+.           elsif type = "int"
+    int $(name);
+    size_t option_len = sizeof (int);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), &option_len);
+.           elsif type = "string"
+    size_t option_len = 255;
+    char *$(name) = (char *) zmalloc (option_len);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), $(name), &option_len);
+.           elsif type = "key"
+    size_t option_len = 40 + 1;     //  Z85 key + terminator
+    char *$(name) = (char *) zmalloc (option_len);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), $(name), &option_len);
+.           elsif type = "socket"
+    SOCKET $(name);
+    size_t option_len = sizeof (SOCKET);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), &option_len);
+.           endif
+.           if type = "int" | type = "socket"
+    return $(name);
+.           else
+    return ($(ctype:)) $(name);
+.           endif
+.           if defined (major_changed)
+#        else
+.           if type_new = "uint64"
+    uint64_t $(name);
+    size_t option_len = sizeof (uint64_t);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), &option_len);
+.           elsif type_new = "int64"
+    int64_t $(name);
+    size_t option_len = sizeof (int64_t);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), &option_len);
+.           elsif type_new = "uint32"
+    uint32_t $(name);
+    size_t option_len = sizeof (uint32_t);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), &option_len);
+.           elsif type_new = "int"
+    int $(name);
+    size_t option_len = sizeof (int);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), &option_len);
+.           elsif type_new = "string"
+    size_t option_len = 255;
+    char *$(name) = (char *) zmalloc (option_len);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), $(name), &option_len);
+.           elsif type_new = "key"
+    size_t option_len = 40 + 1;     //  Z85 key + terminator
+    char *$(name) = (char *) zmalloc (option_len);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), $(name), &option_len);
+.           elsif type_new = "socket"
+    SOCKET $(name);
+    size_t option_len = sizeof (SOCKET);
+    zmq_getsockopt (zsock_resolve (self), ZMQ_$(NAME), &$(name), &option_len);
+.           endif
+.           if type_new = "int" | type_new = "socket"
+    return $(name);
+.           else
+    return ($(ctype_new:)) $(name);
+.           endif
+#        endif
+.           endif
+.           if style = "macro"
+#   else
+.               if type = "string" | type = "key"
+    return NULL;
+.               else
+    return 0;
+.               endif
+#   endif
+.           endif
+}
+
+.       endif
+.       endfor
+.   for source
+$(string.trim(.):)
+
+.   endfor
+
+.endfor
+//  --------------------------------------------------------------------------
+//  Selftest
+//  *** GENERATED SOURCE CODE, DO NOT EDIT, SEE INSTRUCTIONS AT START ***
+
+void
+zsock_option_test (bool verbose)
+{
+    printf (" * zsock_option: ");
+
+    //  @selftest
+    zsock_t *self;
+.for version
+.   if defined (.major_removed)
+#if (ZMQ_VERSION_MAJOR >= $(major)) && (ZMQ_VERSION_MAJOR < $(major_removed))
+.   else
+#if (ZMQ_VERSION_MAJOR >= $(major))
+.   endif
+.   if defined (.minor)
+#   if (ZMQ_VERSION_MINOR >= $(minor))
+.   endif
+.   for option where defined (test)
+.       if defined (option.major_removed)
+#   if (ZMQ_VERSION_MAJOR < $(option.major_removed))
+.       endif
+.       if style = "macro"
+#     if defined (ZMQ_$(NAME))
+.       endif
+    self = zsock_new (ZMQ_$(TEST));
+    assert (self);
+.       if mode = "rw" | mode = "w"
+.           if ctype = "int"
+    zsock_set_$(name) (self, $(test_value? 1 :));
+.               if mode = "rw"
+    assert (zsock_$(name) (self) == $(test_value? 1 :));
+.               endif
+.           else
+    zsock_set_$(name) (self, "$(test_value?'test':)");
+.           endif
+.       endif
+.       if mode = "rw" | mode = "r"
+.           if type = "string" | type = "key"
+    char *$(name) = zsock_$(name) (self);
+    assert ($(name));
+    freen ($(name));
+.           else
+    zsock_$(name) (self);
+.           endif
+.       endif
+    zsock_destroy (&self);
+.       if style = "macro"
+#     endif
+.       endif
+.       if defined (option.major_removed)
+#   endif
+.       endif
+.   endfor
+.   if defined (.minor)
+#   endif
+.   endif
+#endif
+.   for selftest
+
+$(string.trim(.):)
+.   endfor
+
+.endfor
+    //  @end
+
+    printf ("OK\\n");
+}

@@ -1,0 +1,20 @@
+Format: 3.0 (quilt)
+Binary: czmq
+Source: czmq
+Version: 4.2.0
+Maintainer: czmq Developers <zeromq-dev@lists.zeromq.org>
+Architecture: any
+Build-Depends: debhelper (>= 9),
+    pkg-config,
+    libzmq3-dev,
+    uuid-dev,
+    libsystemd-dev,
+    liblz4-dev,
+    dh-python,
+    python-all-dev, python-cffi, python-setuptools,
+    python3-all-dev, python3-cffi, python3-setuptools,
+    asciidoc-base | asciidoc, xmlto,
+    dh-autoreconf
+
+Files:
+ 7697688bf65a35bc33ae2db51ebb0e3b 818110 czmq.tar.gz

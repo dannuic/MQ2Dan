@@ -1,0 +1,45 @@
+<project
+    name = "zyre"
+    description = "an open-source framework for proximity-based P2P apps"
+    script = "zproject.gsl"
+    license = "MPLv2"
+    email = "zeromq-dev@lists.zeromq.org"
+    url = "https://github.com/zeromq/zyre"
+    license = "MPLv2"
+    repository = "https://github.com/zeromq/zyre"
+    unique_class_name = "0"
+    >
+    <include filename = "license.xml" />
+    <version major = "2" minor = "0" patch = "1" />
+    <abi current = "2" revision = "1" age = "0" />
+    <use project = "czmq" />
+
+    <class name = "zyre" />
+    <class name = "zyre_event" />
+    <class name = "zre_msg" private = "1" />
+    <class name = "zyre_peer" private = "1" />
+    <class name = "zyre_group" private = "1" />
+    <class name = "zyre_election" private = "1" />
+    <class name = "zyre_node" private = "1" />
+    <model name = "zre_msg" />
+
+    <main name = "perf_local" private = "1" />
+    <main name = "perf_remote" private = "1" />
+    <main name = "zpinger" />
+    <main name = "ztester_beacon" private = "1" />
+    <main name = "ztester_gossip" private = "1" />
+
+    <target name = "*" />
+    <target name = "nodejs">
+        <option name = "version" value = "0.0.6" />
+        <option name = "repo" value = "https://github.com/hintjens/zyre-nodejs" />
+    </target>
+    <target name = "jenkins">
+        <option name = "require_good_clang_format" value = "0" />
+    </target>
+
+    <constant name = "ZRE_DISCOVERY_PORT" value = "5670" state = "stable">IANA-assigned UDP port for ZRE</constant>
+    <constant name = "REAP_INTERVAL" value = "1000" private = "1" >Once per second</constant>
+    <constant name = "ZAP_DOMAIN_DEFAULT" value = "global" state = "draft" type = "string">Default ZAP domain (auth)</constant>
+</project>
+
