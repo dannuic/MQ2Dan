@@ -44,7 +44,6 @@
     <IntDir>$(ProjectDir)..\build\$(Configuration)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <ExtensionsToDeleteOnClean>libczmq.dll;libzmq*.dll;libzyre.dll;$(ExtensionsToDeleteOnClean)</ExtensionsToDeleteOnClean>
     <OutDir>$(ProjectDir)..\..\$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)..\build\$(Configuration)\</IntDir>
     <LinkIncremental>false</LinkIncremental>
@@ -104,17 +103,6 @@
     <ClInclude Include="Node.h" />
     <ClInclude Include="Request.h" />
     <ClInclude Include="Subscribe.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\zyre\czmq\build\czmq-static.vcxproj">
-      <Project>{fdd2b322-0cb6-3124-9524-e0e59c0dc80b}</Project>
-    </ProjectReference>
-    <ProjectReference Include="..\zyre\libzmq\build\libzmq-static.vcxproj">
-      <Project>{d3323e39-d113-3779-98e4-0c093df15dad}</Project>
-    </ProjectReference>
-    <ProjectReference Include="..\zyre\zyre\build\zyre-static.vcxproj">
-      <Project>{80dcdb45-004d-3249-817c-3057a9d8eaf7}</Project>
-    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
