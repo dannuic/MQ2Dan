@@ -1,7 +1,8 @@
 # MQ2Dan
 
 ## MQ2DanNet
-    This plugin is designed to be a serverless peer network. It is (hopefully) mostly plug and play, and should automatically discover peers for most local network configurations.
+    This plugin is designed to be a serverless peer network. It is (hopefully) mostly plug and play, 
+    and should automatically discover peers for most local network configurations.
     
 #### Some Notes about Setup
 * Some complicated network topologies won't be supported (a server interface is a better solution)
@@ -20,7 +21,7 @@ There are 2 basic uses
   * Dropping an observer: `/dobserve <name> <query> drop`
 2. Single-use direct query
   * Submitting a query: `${DanNet[<name>].Query[<query>]` or `${DanNet[<name>].Q[<query>]`
-    * The result of that will initially be null
+    * The result of that will initially be NULL (a string)
       * requires some form of waiting for a response
       * subsequent requests with the same query will attempt to read response
 
@@ -30,8 +31,7 @@ A query is simply a normal TLO access from the perspective of the peer with the 
 Examples:
 * `Me.CurrentMana`
 * `Target.ID`
-
-Some caveats: I currently do not have any kind of `noparse` implemented, so you can't pass internal variables expecting the peer to evaluate it, as it will evaluate before forming the query to send.
+* `Me.Current$\{thing}` -- this will evaluate `${thing}` on the peer before sending a response
 
 
 ### Names
