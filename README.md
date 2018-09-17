@@ -1,0 +1,49 @@
+# MQ2Dan
+
+## MQ2DanNet
+    This plugin is designed to be a serverless peer network. It is (hopefully) mostly plug and play, and should automatically discover peers for most local network configurations.
+    
+#### Some Notes about Setup
+* Some complicated network topologies won't be supported (a server interface is a better solution)
+* If for some reason the peers aren't self-discovering on a local network
+  * check the output of `/dinfo interface`
+  * set one of the discovered interface names with `/dinfo interface <name>`
+  * failing that, I'll have to look into why, so contact me with as much info as possible
+
+### Use
+There are 2 basic uses
+1. Set up an observer
+  * Methods of setting up an observer
+    * `/dobserve <name> <query>`
+    * `${DanNet[<name>].Observe[<query>]}` or `${DanNet[<name>].O[<query>]}`
+  * Reading an observer's data: `${DanNet[<name>].Observe[<query>]}` or `${DanNet[<name>].O[<query>]}`
+  * Dropping an observer: `/dobserve <name> <query> drop`
+2. Single-use direct query
+  * Submitting a query: `${DanNet[<name>].Query[<query>]` or `${DanNet[<name>].Q[<query>]`
+    * The result of that will initially be null
+      * requires some form of waiting for a response
+      * subsequent requests with the same query will attempt to read response
+
+
+### Queries
+A query is simply a normal TLO access from the perspective of the peer with the external `${}` stripped
+Examples:
+* `Me.CurrentMana`
+* `Target.ID`
+
+Some caveats: I currently do not have any kind of `noparse` implemented, so you can't pass internal variables expecting the peer to evaluate it, as it will evaluate before forming the query to send.
+
+
+### Names
+A fully-qualified name is `<server>_<character>`, but if you only intend to communicate on your own server, you can ommit the first part and use just `<charactername>` in all these commands.
+Examples:
+* Locally talk to fatty: `/dtell fatty You smell.`
+* Talk to fatty on the test server: `/dtell test_fatty I can still smell you from this server!`
+
+
+### Commands
+I have added some simple echo commands in addition to `/dinfo` and `/dobserve`, as well as a way to join/leave arbitrary groups.
+* `/djoin <group>` -- join a group
+* `/dleave <group>` -- leave a group
+* `/dtell <name> <text>` -- echo text on peer's console
+* `/dgtell <group> <text>` -- echo text on console for all peers in group
