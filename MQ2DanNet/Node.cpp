@@ -189,7 +189,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
         bool did_terminate = zpoller_terminated(poller);
         if (which == pipe) {
             // we've got a command from the caller here
-            DebugSpewAlways("Got message from caller");
+            //DebugSpewAlways("Got message from caller");
             zmsg_t *msg = zmsg_recv(which);
             if (!msg) break; // Interrupted
 
@@ -224,7 +224,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
             zmsg_destroy(&msg);
         } else if (which == zyre_socket(node->_node)) {
             // we've received something over our socket
-            DebugSpewAlways("Got a message over the socket");
+            //DebugSpewAlways("Got a message over the socket");
             zyre_event_t *z_event = zyre_event_new(node->_node);
             if (!z_event) break;
 

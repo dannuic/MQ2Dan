@@ -2,6 +2,7 @@
 #include "../MQ2Plugin.h"
 
 #include <archive.h>
+#include <regex>
 
 using namespace MQ2DanNet;
 
@@ -51,8 +52,10 @@ const bool Query::callback(std::stringstream&& args) {
 
         PCHARINFO pChar = GetCharInfo();
         if (pChar) {
+            std::string final_request = std::regex_replace(request, std::regex("\\$\\\\\\{"), "${");
+
             CHAR szQuery[MAX_STRING];
-            strcpy_s(szQuery, request.c_str());
+            strcpy_s(szQuery, final_request.c_str());
             MQ2TYPEVAR Result;
 
             // Since we don't surround the query with ${}, we want to parse all the variables specified inside
@@ -142,8 +145,10 @@ const bool Observe::callback(std::stringstream&& args) {
         received >> from >> group >> key >> query;
         DebugSpewAlways("OBSERVE --> FROM: %s, GROUP: %s, QUERY: %s", from.c_str(), group.c_str(), query.c_str());
 
+        std::string final_query = std::regex_replace(query, std::regex("\\$\\\\\\{"), "${");
+
         CHAR szQuery[MAX_STRING];
-        strcpy_s(szQuery, query.c_str());
+        strcpy_s(szQuery, final_query.c_str());
         MQ2TYPEVAR Result;
 
         std::stringstream args;
@@ -152,7 +157,6 @@ const bool Observe::callback(std::stringstream&& args) {
         // only install the observer if it is a valid query
         ParseMacroData(szQuery, MAX_STRING);
         if (ParseMQ2DataPortion(szQuery, Result) && Result.Type) {
-            //std::string final_query = "${Me." + query + "}";
             std::string return_group = Node::get().register_observer(from.c_str(), query.c_str());
             ar << return_group;
         } else {
@@ -235,8 +239,10 @@ std::stringstream Update::pack(const std::string& query) {
 
     PCHARINFO pChar = GetCharInfo();
     if (pChar) {
+        std::string final_query = std::regex_replace(query, std::regex("\\$\\\\\\{"), "${");
+
         CHAR szQuery[MAX_STRING];
-        strcpy_s(szQuery, query.c_str());
+        strcpy_s(szQuery, final_query.c_str());
         MQ2TYPEVAR Result;
 
         // Since we don't surround the query with ${}, we want to parse all the variables specified inside
