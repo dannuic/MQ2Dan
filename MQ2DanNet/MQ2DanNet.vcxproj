@@ -90,7 +90,6 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Commands.cpp" />
     <ClCompile Include="MQ2DanNet.cpp">
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -99,10 +98,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\MQ2Plugin.h" />
-    <ClInclude Include="Commands.h" />
     <ClInclude Include="Node.h" />
-    <ClInclude Include="Request.h" />
-    <ClInclude Include="Subscribe.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

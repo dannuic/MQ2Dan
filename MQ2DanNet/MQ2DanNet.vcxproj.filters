@@ -21,24 +21,12 @@
     <ClInclude Include="Node.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Subscribe.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Request.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Commands.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="MQ2DanNet.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Node.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Commands.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
