@@ -10,6 +10,7 @@
 #include "../MQ2Plugin.h"
 
 #include <archive.h>
+#include <regex>
 #include <sstream>
 
 PLUGIN_VERSION(0.1);
@@ -222,10 +223,69 @@ PLUGIN_API VOID DGtellCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     message.erase(0, message.find_first_not_of(" \t", n));
 
     if (group.empty() || message.empty())
-        WriteChatColor("Syntax: /dcast <group> <message> -- broadcast message to group", USERCOLOR_DEFAULT);
+        WriteChatColor("Syntax: /dgtell <group> <message> -- broadcast message to group", USERCOLOR_DEFAULT);
     else {
         WriteChatf("\ax\a-t[\ax\at -->\ax\a-t(%s) ]\ax \aw%s\ax", group.c_str(), message.c_str());
         Node::get().shout<MQ2DanNet::Echo>(group, message);
+    }
+}
+
+PLUGIN_API VOID DExecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
+    CHAR szName[MAX_STRING] = { 0 };
+    GetArg(szName, szLine, 1);
+    auto name = Node::init_string(szName);
+    std::string command(szLine);
+    std::string::size_type n = command.find_first_not_of(" \t", 0);
+    n = command.find_first_of(" \t", n);
+    command.erase(0, command.find_first_not_of(" \t", n));
+
+    if (name.empty() || command.empty())
+        WriteChatColor("Syntax: /dexecute <name> <command> -- direct name to execute command", USERCOLOR_DEFAULT);
+    else {
+        name = Node::get().get_full_name(name);
+
+        WriteChatf("\ax\a-o[ \ax\ao-->\ax\a-o(%s) ]\ax \aw%s\ax", name.c_str(), command.c_str());
+        Node::get().whisper<MQ2DanNet::Execute>(name, command);
+    }
+}
+
+PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
+    CHAR szGroup[MAX_STRING] = { 0 };
+    GetArg(szGroup, szLine, 1);
+    auto group = Node::init_string(szGroup);
+    std::string command(szLine);
+    std::string::size_type n = command.find_first_not_of(" \t", 0);
+    n = command.find_first_of(" \t", n);
+    command.erase(0, command.find_first_not_of(" \t", n));
+
+    if (group.empty() || command.empty())
+        WriteChatColor("Syntax: /dgexecute <group> <command> -- direct group to execute command", USERCOLOR_DEFAULT);
+    else {
+        WriteChatf("\ax\a-o[\ax\ao -->\ax\a-o(%s) ]\ax \aw%s\ax", group.c_str(), command.c_str());
+        Node::get().shout<MQ2DanNet::Execute>(group, command);
+    }
+}
+
+PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
+    CHAR szGroup[MAX_STRING] = { 0 };
+    GetArg(szGroup, szLine, 1);
+    auto group = Node::init_string(szGroup);
+    std::string command(szLine);
+    std::string::size_type n = command.find_first_not_of(" \t", 0);
+    n = command.find_first_of(" \t", n);
+    command.erase(0, command.find_first_not_of(" \t", n));
+
+    if (group.empty() || command.empty())
+        WriteChatColor("Syntax: /dgaexecute <group> <command> -- direct group to execute command", USERCOLOR_DEFAULT);
+    else {
+        WriteChatf("\ax\a-o[\ax\ao -->\ax\a-o(%s) ]\ax \aw%s\ax", group.c_str(), command.c_str());
+        Node::get().shout<MQ2DanNet::Execute>(group, command);
+
+        std::string final_command = std::regex_replace(command, std::regex("\\$\\\\\\{"), "${");
+
+        CHAR szCommand[MAX_STRING] = { 0 };
+        strcpy_s(szCommand, final_command.c_str());
+        EzCommand(szCommand);
     }
 }
 
@@ -260,6 +320,7 @@ PLUGIN_API VOID InitializePlugin(VOID) {
 	DebugSpewAlways("Initializing MQ2DanNet");
 
     Node::get().register_command<MQ2DanNet::Echo>();
+    Node::get().register_command<MQ2DanNet::Execute>();
     Node::get().register_command<MQ2DanNet::Query>();
     Node::get().register_command<MQ2DanNet::Observe>();
     Node::get().register_command<MQ2DanNet::Update>();
@@ -271,6 +332,9 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     AddCommand("/dleave", DLeaveCommand);
     AddCommand("/dtell", DTellCommand);
     AddCommand("/dgtell", DGtellCommand);
+    AddCommand("/dexecute", DExecuteCommand);
+    AddCommand("/dgexecute", DGexecuteCommand);
+    AddCommand("/dgaexecute", DGAexecuteCommand);
     AddCommand("/dobserve", DObserveCommand);
 
     pDanNetType = new MQ2DanNetType;
@@ -286,6 +350,7 @@ PLUGIN_API VOID ShutdownPlugin(VOID) {
     Node::get().shutdown();
 
     Node::get().unregister_command<MQ2DanNet::Echo>();
+    Node::get().unregister_command<MQ2DanNet::Execute>();
     Node::get().unregister_command<MQ2DanNet::Query>();
     Node::get().unregister_command<MQ2DanNet::Observe>();
     Node::get().unregister_command<MQ2DanNet::Update>();
@@ -295,6 +360,9 @@ PLUGIN_API VOID ShutdownPlugin(VOID) {
     RemoveCommand("/dleave");
     RemoveCommand("/dtell");
     RemoveCommand("/dgtell");
+    RemoveCommand("/dexecute");
+    RemoveCommand("/dgexecute");
+    RemoveCommand("/dgaexecute");
     RemoveCommand("/dobserve");
 
     RemoveMQ2Data("DanNet");

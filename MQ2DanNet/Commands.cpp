@@ -36,6 +36,43 @@ std::stringstream Echo::pack(const std::string& message) {
     return send_stream;
 }
 
+const bool Execute::callback(std::stringstream&& args) {
+    Archive<std::stringstream> received(args);
+    std::string from;
+    std::string group;
+    std::string command;
+
+    try {
+        received >> from >> group >> command;
+        DebugSpewAlways("EXECUTE --> FROM: %s, GROUP: %s, TEXT: %s", from.c_str(), group.c_str(), command.c_str());
+
+        std::string final_command = std::regex_replace(command, std::regex("\\$\\\\\\{"), "${");
+
+        if (group.empty()) {
+            WriteChatf("\ax\a-o[\ax\ao %s \ax\a-o]\ax \aw%s\ax", from.c_str(), final_command.c_str());
+        } else {
+            WriteChatf("\ax\a-o[\ax\ao %s\ax\a-o (%s) ]\ax \aw%s\ax", from.c_str(), group.c_str(), final_command.c_str());
+        }
+
+        CHAR szCommand[MAX_STRING] = { 0 };
+        strcpy_s(szCommand, final_command.c_str());
+        EzCommand(szCommand);
+
+        return false;
+    } catch (std::runtime_error&) {
+        DebugSpewAlways("MQ2DanNet::Echo -- Failed to deserialize.");
+        return false;
+    }
+}
+
+std::stringstream Execute::pack(const std::string& command) {
+    std::stringstream send_stream;
+    Archive<std::stringstream> send(send_stream);
+    send << command;
+
+    return send_stream;
+}
+
 const bool Query::callback(std::stringstream&& args) {
     Archive<std::stringstream> received(args);
     std::string from;

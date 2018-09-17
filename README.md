@@ -47,3 +47,6 @@ I have added some simple echo commands in addition to `/dinfo` and `/dobserve`, 
 * `/dleave <group>` -- leave a group
 * `/dtell <name> <text>` -- echo text on peer's console
 * `/dgtell <group> <text>` -- echo text on console for all peers in group
+* `/dexecute <name> <command>` -- executes a command on peer's client
+* `/dgexecute <group> <command>` -- executes a command on all clients in a group (except own)
+* `/dgaexecute <group> <command>` -- executes a command on all clients in a group (including own)
