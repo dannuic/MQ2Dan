@@ -1,7 +1,0 @@
-project.Makefile
-*.mk
-out/
-Makefile
-tmp-deps/
-libzmq/
-czmq/

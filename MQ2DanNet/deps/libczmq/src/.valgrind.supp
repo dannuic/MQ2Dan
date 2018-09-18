@@ -1,0 +1,45 @@
+{
+   <socketcall_sendto>
+   Memcheck:Param
+   socketcall.sendto(msg)
+   fun:send
+   ...
+}
+{
+   <socketcall_sendto>
+   Memcheck:Param
+   socketcall.send(msg)
+   fun:send
+   ...
+}
+{
+   <glibc_freeres>
+   Memcheck:Free
+   fun:free
+   ...
+   fun:__libc_freeres
+   ...
+}
+
+{
+    <glibc_internal_pool>
+    Memcheck:Leak
+    match-leak-kinds: reachable
+    fun:malloc
+    fun:pool
+    fun:__static_initialization_and_destruction_0
+    ...
+}
+{
+   <gcrypt_init>
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:malloc
+   fun:do_malloc
+   fun:_gcry_malloc
+   ...
+   fun:_gcry_mpi_alloc
+   fun:_gcry_mpi_alloc_set_ui
+   fun:_gcry_mpi_init
+   ...
+}

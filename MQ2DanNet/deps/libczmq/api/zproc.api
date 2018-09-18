@@ -1,0 +1,133 @@
+<class name = "zproc" state = "draft">
+    <!--
+    Copyright (c) the Contributors as noted in the AUTHORS file.
+    This file is part of CZMQ, the high-level C binding for 0MQ:
+    http://czmq.zeromq.org.
+
+    This Source Code Form is subject to the terms of the Mozilla Public
+    License, v. 2.0. If a copy of the MPL was not distributed with this
+    file, You can obtain one at http://mozilla.org/MPL/2.0/.
+    -->
+    process configuration and status
+
+    <constructor>
+        Create a new zproc.
+        NOTE: On Windows and with libzmq3 and libzmq2 this function
+        returns NULL. Code needs to be ported there.
+    </constructor>
+
+    <destructor>
+        Destroy zproc, wait until process ends.
+    </destructor>
+
+    <method name = "args" >
+        Return command line arguments (the first item is the executable) or
+        NULL if not set.
+        <return type = "zlist" fresh = "1" />
+    </method>
+
+    <method name = "set args" >
+        Setup the command line arguments, the first item must be an (absolute) filename
+        to run.
+        <argument name = "arguments" type = "zlist" by_reference = "1" />
+    </method>
+
+    <method name = "set argsx" >
+        Setup the command line arguments, the first item must be an (absolute) filename
+        to run. Variadic function, must be NULL terminated.
+        <argument name = "arguments" type = "string" variadic = "1" />
+    </method>
+
+    <method name = "set env" >
+        Setup the environment variables for the process.
+        <argument name = "arguments" type = "zhash" by_reference = "1" />
+    </method>
+
+    <method name = "set stdin" >
+        Connects process stdin with a readable ('>', connect) zeromq socket. If
+        socket argument is NULL, zproc creates own managed pair of inproc
+        sockets.  The writable one is then accessbile via zproc_stdin method.
+        <argument name = "socket" type = "anything" />
+    </method>
+
+    <method name = "set stdout" >
+        Connects process stdout with a writable ('@', bind) zeromq socket. If
+        socket argument is NULL, zproc creates own managed pair of inproc
+        sockets.  The readable one is then accessbile via zproc_stdout method.
+        <argument name = "socket" type = "anything" />
+    </method>
+
+    <method name = "set stderr" >
+        Connects process stderr with a writable ('@', bind) zeromq socket. If
+        socket argument is NULL, zproc creates own managed pair of inproc
+        sockets.  The readable one is then accessbile via zproc_stderr method.
+        <argument name = "socket" type = "anything" />
+    </method>
+
+    <method name = "stdin">
+        Return subprocess stdin writable socket. NULL for
+        not initialized or external sockets.
+        <return type="anything" />
+    </method>
+
+    <method name = "stdout">
+        Return subprocess stdout readable socket. NULL for
+        not initialized or external sockets.
+        <return type="anything" />
+    </method>
+
+    <method name = "stderr">
+        Return subprocess stderr readable socket. NULL for
+        not initialized or external sockets.
+        <return type="anything" />
+    </method>
+
+    <method name = "run" >
+        Starts the process, return just before execve/CreateProcess.
+        <return type = "integer" />
+    </method>
+
+    <method name = "returncode">
+        process exit code
+        <return type="integer" />
+    </method>
+
+    <method name = "pid">
+        PID of the process
+        <return type="integer" />
+    </method>
+
+    <method name = "running">
+        return true if process is running, false if not yet started or finished
+        <return type="boolean" />
+    </method>
+
+    <method name = "wait">
+        The timeout should be zero or greater, or -1 to wait indefinitely.
+        wait or poll process status, return return code
+        <argument name = "timeout" type = "integer" />
+        <return type="integer" />
+    </method>
+
+    <method name = "shutdown">
+        send SIGTERM signal to the subprocess, wait for grace period and
+        eventually send SIGKILL
+        <argument name = "timeout" type = "integer" />
+    </method>
+
+    <method name = "actor">
+        return internal actor, useful for the polling if process died
+        <return type="anything" />
+    </method>
+
+    <method name = "kill">
+        send a signal to the subprocess
+        <argument name = "signal" type = "integer" />
+    </method>
+
+    <method name = "set verbose">
+        set verbose mode
+        <argument name = "verbose" type = "boolean" />
+    </method>
+
+</class>

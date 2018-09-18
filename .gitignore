@@ -1,4 +1,5 @@
-.vs
-build
-zyre/ZeroMQ/lib
-zyre/libsodium/Release
+/.vs
+/build
+/zyre/ZeroMQ/lib
+/zyre/libsodium/Release
+lib*.lib
