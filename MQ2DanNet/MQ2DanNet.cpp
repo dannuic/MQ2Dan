@@ -280,66 +280,6 @@ using namespace MQ2DanNet;
 
 #pragma region Node
 
-//auto libczmq = LoadLibrary("libczmq.dll");
-//auto libzyre = LoadLibrary("libzyre.dll");
-
-#define ZYRE_FUNC(Name, Ret, ...) Ret(__stdcall* Name)(__VA_ARGS__) = (Ret(__stdcall*)(__VA_ARGS__))GetProcAddress(libzyre, #Name)
-#define CZMQ_FUNC(Name, Ret, ...) Ret(__stdcall* Name)(__VA_ARGS__) = (Ret(__stdcall*)(__VA_ARGS__))GetProcAddress(libczmq, #Name)
-
-//CZMQ_FUNC(zlist_first, void*, zlist_t*);
-//CZMQ_FUNC(zlist_next, void*, zlist_t*);
-//CZMQ_FUNC(zlist_destroy, void, zlist_t**);
-//CZMQ_FUNC(zsock_signal, int, void*, byte);
-//CZMQ_FUNC(zpoller_new, zpoller_t*, void*, ...);
-//CZMQ_FUNC(zpoller_wait, void*, zpoller_t*, int);
-//CZMQ_FUNC(zpoller_expired, bool, zpoller_t*);
-//CZMQ_FUNC(zpoller_terminated, bool, zpoller_t*);
-//CZMQ_FUNC(zmsg_recv, zmsg_t*, void*);
-//CZMQ_FUNC(zmsg_popstr, char*, zmsg_t*);
-//CZMQ_FUNC(zmsg_pop, zframe_t*, zmsg_t*);
-//CZMQ_FUNC(zframe_data, byte*, zframe_t*);
-//CZMQ_FUNC(zframe_size, size_t, zframe_t*);
-//CZMQ_FUNC(zframe_destroy, void, zframe_t**);
-//CZMQ_FUNC(zmsg_destroy, void, zmsg_t**);
-//CZMQ_FUNC(zpoller_set_nonstop, void, zpoller_t*, bool);
-//CZMQ_FUNC(zclock_sleep, void, int);
-//CZMQ_FUNC(zframe_new, zframe_t*, const void*, size_t);
-//CZMQ_FUNC(zmsg_new, zmsg_t*, void);
-//CZMQ_FUNC(zmsg_prepend, int, zmsg_t*, zframe_t**);
-//CZMQ_FUNC(zmsg_pushstr, int, zmsg_t*, const char*);
-//CZMQ_FUNC(ziflist_new, ziflist_t*, void);
-//CZMQ_FUNC(ziflist_first, const char *, ziflist_t*);
-//CZMQ_FUNC(ziflist_next, const char *, ziflist_t*);
-//CZMQ_FUNC(ziflist_destroy, void, ziflist_t**);
-//CZMQ_FUNC(zactor_new, zactor_t*, zactor_fn*, void*);
-//CZMQ_FUNC(zactor_destroy, void, zactor_t**);
-//CZMQ_FUNC(zsys_shutdown, int, void);
-//CZMQ_FUNC(zmsg_addstr, int, zmsg_t*, const char*);
-//CZMQ_FUNC(zmsg_send, int, zmsg_t**, void*);
-//CZMQ_FUNC(zpoller_sdestroy, void, zpoller_t**);
-//ZYRE_FUNC(zyre_event_destroy, void, zyre_event_t**);
-//ZYRE_FUNC(zyre_event_get_msg, zmsg_t*, zyre_event_t*);
-//ZYRE_FUNC(zyre_shout, int, zyre_t*, const char*, zmsg_t**);
-//ZYRE_FUNC(zyre_whisper, int, zyre_t*, const char*, zmsg_t**);
-//ZYRE_FUNC(zyre_uuid, const char*, zyre_t*);
-//ZYRE_FUNC(zyre_destroy, void, zyre_t**);
-//ZYRE_FUNC(zyre_join, int, zyre_t*, const char*);
-//ZYRE_FUNC(zyre_leave, int, zyre_t*, const char*);
-//ZYRE_FUNC(zyre_new, zyre_t*, const char*);
-//ZYRE_FUNC(zyre_set_interface, void, zyre_t*, const char*);
-//ZYRE_FUNC(zyre_set_header, void, zyre_t*, const char*, const char*, ...);
-//ZYRE_FUNC(zyre_start, int, zyre_t*);
-//ZYRE_FUNC(zyre_own_groups, zlist_t*, zyre_t*);
-//ZYRE_FUNC(zyre_socket, zsock_t*, zyre_t*);
-//ZYRE_FUNC(zyre_stop, void, zyre_t*);
-//ZYRE_FUNC(zyre_destroy, void, zyre_t**);
-//ZYRE_FUNC(zyre_event_peer_uuid, const char*, zyre_event_t*);
-//ZYRE_FUNC(zyre_event_group, const char*, zyre_event_t*);
-//ZYRE_FUNC(zyre_event_peer_name, const char*, zyre_event_t*);
-//ZYRE_FUNC(zyre_event_type, const char*, zyre_event_t*);
-//ZYRE_FUNC(zyre_event_new, zyre_event_t*, zyre_t*);
-//ZYRE_FUNC(zyre_socket, zsock_t*, zyre_t*);
-
 MQ2DANNET_NODE_API Node& Node::get() {
     static Node instance;
     return instance;
