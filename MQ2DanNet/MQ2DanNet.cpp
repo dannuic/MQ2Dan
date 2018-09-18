@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.02 -- Added parseable outputs and tracked peers/groups from underlying tech
  * dannuic: version 0.01 -- initial version, can set observers and perform queries, see README.md for more information
  */
 // MQ2DanNet.cpp : Defines the entry point for the DLL application.
@@ -9,10 +10,21 @@
 // are shown below. Remove the ones your plugin does not use.  Always use Initialize
 // and Shutdown for setup and cleanup, do NOT do it in DllMain.
 
-#include <zyre.h> // IMPORTANT! This must be included first because it includes <winsock2.h>, which needs to come before <windows.h> -- we cannot guarantee no inclusion of <windows.h> in other headers
+ // IMPORTANT! This must be included first because it includes <winsock2.h>, which needs to come before <windows.h> -- we cannot guarantee no inclusion of <windows.h> in other headers
+#ifdef LOCAL_BUILD
+#include <zyre.h>
+#else
+#include "..\MQ2DanNetDeps\libzyre\include\zyre.h"
+#endif
+
 #include "../MQ2Plugin.h"
 
+#ifdef LOCAL_BUILD
 #include <archive.h>
+#else
+#include "..\archive\archive.h"
+#endif
+
 #include <regex>
 #include <iterator>
 #include <functional>

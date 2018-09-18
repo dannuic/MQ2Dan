@@ -71,7 +71,7 @@
     <Link />
     <ClCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)deps\archive;$(ProjectDir)deps\libzmq\include;$(ProjectDir)deps\libczmq\include;$(ProjectDir)deps\libzyre\include;$(ProjectDir)..;$(ProjectDir)..\..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;CINTERFACE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;CINTERFACE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WarningLevel>Level3</WarningLevel>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <StructMemberAlignment>4Bytes</StructMemberAlignment>
