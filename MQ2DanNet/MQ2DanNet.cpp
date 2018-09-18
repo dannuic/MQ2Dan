@@ -287,7 +287,14 @@ namespace MQ2DanNet {
             return 0;
         }
 
+        bool is_in_group(const std::string& group) {
+            auto groups = get_own_groups();
+            return groups.find(group) != groups.end();
+        }
+
         std::string peers_arr();
+        std::string peers_arr(const std::string& group);
+        std::string groups_arr(bool all);
 
         // smartly reads/sets/clears _current_query
         Observation query(const std::string& query);
@@ -815,15 +822,36 @@ Node::Node() {}
 Node::~Node() {}
 
 std::string MQ2DanNet::Node::peers_arr() {
+    return peers_arr("");
+}
+
+std::string MQ2DanNet::Node::peers_arr(const std::string& group) {
     if (_node) {
-        std::set<std::string> peers_ref = get_peers();
-        std::set<std::string>peers;
+        std::set<std::string> peers_ref = group.empty() ? get_peers() : get_group_peers(group);
+
+        std::set<std::string> peers;
         std::transform(peers_ref.begin(), peers_ref.end(), std::inserter(peers, peers.begin()), [node(_node)](std::string peer) -> std::string {
             return zyre_peer_header_value(node, peer.c_str(), "name");
         });
 
+        if (group.empty() || is_in_group(group)) peers.emplace(_node_name);
+
         std::string delimiter = "|";
         return std::accumulate(peers.cbegin(), peers.cend(), std::string(),
+            [delimiter](const std::string& s, const std::string& p) {
+            return s + (s.empty() ? std::string() : delimiter) + p;
+        });
+    }
+
+    return std::string();
+}
+
+std::string MQ2DanNet::Node::groups_arr(bool all = true) {
+    if (_node) {
+        auto groups = all ? get_all_groups() : get_own_groups();
+
+        std::string delimiter = "|";
+        return std::accumulate(groups.cbegin(), groups.cend(), std::string(),
             [delimiter](const std::string& s, const std::string& p) {
             return s + (s.empty() ? std::string() : delimiter) + p;
         });
@@ -1213,6 +1241,8 @@ public:
         Name,
         PeerCount,
         Peers,
+        Groups,
+        Joined,
         O,
         Observe,
         Q,
@@ -1223,6 +1253,8 @@ public:
         TypeMember(Name);
         TypeMember(PeerCount);
         TypeMember(Peers);
+        TypeMember(Groups);
+        TypeMember(Joined);
         TypeMember(O);
         TypeMember(Observe);
         TypeMember(Q);
@@ -1249,7 +1281,22 @@ public:
             Dest.Type = pIntType;
             return true;
         case Peers:
-            strcpy_s(Buf, Node::get().peers_arr().c_str());
+            if (Index[0] != '\0') {
+                strcpy_s(Buf, Node::get().peers_arr(Index).c_str());
+            } else {
+                strcpy_s(Buf, Node::get().peers_arr().c_str());
+            }
+
+            Dest.Ptr = Buf;
+            Dest.Type = pStringType;
+            return true;
+        case Groups:
+            strcpy_s(Buf, Node::get().groups_arr().c_str());
+            Dest.Ptr = Buf;
+            Dest.Type = pStringType;
+            return true;
+        case Joined:
+            strcpy_s(Buf, Node::get().groups_arr(false).c_str());
             Dest.Ptr = Buf;
             Dest.Type = pStringType;
             return true;
