@@ -402,31 +402,19 @@ MQ2DANNET_NODE_API const std::string Node::get_info() {
         return "NONET";
 
     std::stringstream output;
-    output << _node_name << " " << zyre_uuid(_node);
-
-    output << std::endl << "PEERS: ";
-    auto peers = get_peers();
-    for (auto peer : peers) {
-        output << std::endl << " --> " << zyre_peer_header_value(_node, peer.c_str(), "name"); // don't worry about the UUID, let's just keep that hidden.
-    }
-
-    output << std::endl << "GROUPS: ";
-    std::set<std::string> groups = get_all_groups();
-    for (auto group : groups) {
-        output << std::endl << " --> " << group;
-    }
-
-    groups = get_own_groups();
-    output << std::endl << "GROUP PEERS: ";
+    std::set<std::string> groups = get_own_groups();
+    output << "CHANNELS: ";
     auto group_peers = get_group_peers();
     for (auto group : group_peers) {
-        output << std::endl << " :: " << group.first;
         if (groups.find(group.first) != groups.end()) {
-            output << std::endl << " --> " << _node_name;
+            output << std::endl << " :: \ax\ag" << group.first << "\ax" << std::endl;
+            output << "\ax\aw" << _node_name << "\ax ";
+        } else {
+            output << std::endl << " :: \ax\a-g" << group.first << "\ax" << std::endl;
         }
 
         for (auto peer : group.second) {
-            output << std::endl << " --> " << zyre_peer_header_value(_node, peer.c_str(), "name");
+            output << "\ax\a-w" << zyre_peer_header_value(_node, peer.c_str(), "name") << "\ax ";
         }
     }
 
@@ -1362,7 +1350,7 @@ PLUGIN_API VOID DInfoCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             WritePrivateProfileString("MQ2DanNet", "Debugging", Node::get().debugging() ? "1" : "0", INIFileName);
         }
     } else {
-        WriteChatf("MQ2DanNet: %s", Node::get().get_info().c_str());
+        WriteChatf("%s", Node::get().get_info().c_str());
     }
 }
 
