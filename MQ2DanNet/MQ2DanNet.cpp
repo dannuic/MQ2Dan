@@ -1,3 +1,7 @@
+/* MQ2DanNet -- peer to peer auto-discovery networking plugin
+ *
+ * dannuic: version 0.01 -- initial version, can set observers and perform queries, see README.md for more information
+ */
 // MQ2DanNet.cpp : Defines the entry point for the DLL application.
 //
 
@@ -69,6 +73,11 @@ namespace MQ2DanNet {
         }
 
         MQ2DANNET_NODE_API const std::string get_info();
+        MQ2DANNET_NODE_API const std::set<std::string> get_peers();
+        MQ2DANNET_NODE_API const std::set<std::string> get_all_groups();
+        MQ2DANNET_NODE_API const std::set<std::string> get_own_groups();
+        MQ2DANNET_NODE_API const std::map<std::string, std::set<std::string> > get_group_peers();
+        MQ2DANNET_NODE_API const std::set<std::string> get_group_peers(const std::string& group);
         MQ2DANNET_NODE_API const std::string get_interfaces();
         MQ2DANNET_NODE_API const std::string get_full_name(const std::string& name);
 
@@ -127,8 +136,9 @@ namespace MQ2DanNet {
                 auto tick = MQGetTickCount64();
                 if (tick - observer_it->second.last >= std::max<unsigned __int64>(10 * observer_it->second.benchmark, 1000)) { // wait at least a second between updates
                     std::string group = observer_group(observer_it->first);
-                    auto group_it = _group_peers.cbegin();
-                    if (group_it != _group_peers.cend() && !group_it->second.empty()) {
+                    auto group_peers = get_group_peers();
+                    auto group_it = group_peers.cbegin();
+                    if (group_it != group_peers.cend() && !group_it->second.empty()) {
                         shout<T>(group_it->first, observer_it->second.query, std::forward<Args>(args)...);
 
                         auto proc_time = MQGetTickCount64() - tick;
@@ -145,9 +155,6 @@ namespace MQ2DanNet {
 
     private:
         std::string _node_name;
-        std::set<std::string> _groups;
-        std::map<std::string, std::string> _peers;
-        std::map<std::string, std::set<std::string> > _group_peers;
 
         std::vector<std::function<bool(const std::string&, const std::string&)> > _join_callbacks;
         std::vector<std::function<bool(const std::string&, const std::string&)> > _leave_callbacks;
@@ -238,8 +245,48 @@ namespace MQ2DanNet {
         // IMPORTANT: these are not exposed as an API, this is on purpose! We need a single point of control for our node (this plugin)
         std::string name() { return _node_name; }
 
-        bool has_peer(const std::string& peer) { return _peers.find(get_full_name(peer)) != _peers.end(); }
-        size_t peers() { return _peers.size(); }
+        std::string peer_uuid(const std::string& name) {
+            std::string uuid("");
+
+            if (_node) {
+                zlist_t* peers = zyre_peers(_node);
+
+                if (peers) {
+                    const char* z_peer = reinterpret_cast<const char*>(zlist_first(peers));
+                    while (z_peer) {
+                        std::string peer_name(zyre_peer_header_value(_node, z_peer, "name"));
+                        if (name == peer_name) {
+                            uuid = z_peer;
+                            break;
+                        }
+
+                        z_peer = reinterpret_cast<const char*>(zlist_next(peers));
+                    }
+
+                    zlist_destroy(&peers);
+                }
+            }
+
+            return uuid;
+        }
+
+        bool has_peer(const std::string& peer) {
+            return !peer_uuid(peer).empty();
+        }
+
+        size_t peers() {
+            if (_node) {
+                zlist_t* peers = zyre_peers(_node);
+                if (peers) {
+                    size_t count = zlist_size(peers);
+                    zlist_destroy(&peers);
+                    return count;
+                }
+            }
+
+            return 0;
+        }
+
         std::string peers_arr();
 
         // smartly reads/sets/clears _current_query
@@ -286,13 +333,11 @@ MQ2DANNET_NODE_API Node& Node::get() {
 }
 
 MQ2DANNET_NODE_API void Node::join(const std::string& group) {
-    if (_groups.emplace(group).second && _node)
-        zyre_join(_node, group.c_str());
+    if (_node) zyre_join(_node, group.c_str());
 }
 
 MQ2DANNET_NODE_API void Node::leave(const std::string& group) {
-    if (_groups.erase(group) > 0 && _node)
-        zyre_leave(_node, group.c_str());
+    if (_node) zyre_leave(_node, group.c_str());
 }
 
 MQ2DANNET_NODE_API void MQ2DanNet::Node::on_join(std::function<bool(const std::string&, const std::string&)> callback) {
@@ -329,9 +374,8 @@ MQ2DANNET_NODE_API void Node::respond(const std::string& name, const std::string
     if (!_node)
         return;
 
-    auto uuid_it = _peers.find(name);
-    if (uuid_it != _peers.end()) {
-        std::string uuid = uuid_it->second;
+    std::string uuid = peer_uuid(name);
+    if (!uuid.empty()) {
         std::transform(uuid.begin(), uuid.end(), uuid.begin(), ::toupper);
 
         args.seekg(0, args.end);
@@ -361,24 +405,124 @@ MQ2DANNET_NODE_API const std::string Node::get_info() {
     output << _node_name << " " << zyre_uuid(_node);
 
     output << std::endl << "PEERS: ";
-    for (auto peer : _peers) {
-        output << std::endl << " --> " << peer.first; // don't worry about the UUID, let's just keep that hidden.
+    auto peers = get_peers();
+    for (auto peer : peers) {
+        output << std::endl << " --> " << zyre_peer_header_value(_node, peer.c_str(), "name"); // don't worry about the UUID, let's just keep that hidden.
     }
 
     output << std::endl << "GROUPS: ";
-    for (auto group : _groups) {
+    std::set<std::string> groups = get_all_groups();
+    for (auto group : groups) {
         output << std::endl << " --> " << group;
     }
 
+    groups = get_own_groups();
     output << std::endl << "GROUP PEERS: ";
-    for (auto group : _group_peers) {
+    auto group_peers = get_group_peers();
+    for (auto group : group_peers) {
         output << std::endl << " :: " << group.first;
+        if (groups.find(group.first) != groups.end()) {
+            output << std::endl << " --> " << _node_name;
+        }
+
         for (auto peer : group.second) {
-            output << std::endl << " --> " << peer;
+            output << std::endl << " --> " << zyre_peer_header_value(_node, peer.c_str(), "name");
         }
     }
 
     return output.str();
+}
+
+MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peers() {
+    std::set<std::string> peers;
+
+    if (_node) {
+        zlist_t* peer_ids = zyre_peers(_node);
+        if (peer_ids) {
+            const char *peer_id = reinterpret_cast<const char*>(zlist_first(peer_ids));
+            while (peer_id) {
+                peers.emplace(peer_id);
+                peer_id = reinterpret_cast<const char*>(zlist_next(peer_ids));
+            }
+
+            zlist_destroy(&peer_ids);
+        }
+    }
+
+    return peers;
+}
+
+MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_all_groups() {
+    std::set<std::string> groups;
+
+    if (_node) {
+        zlist_t* peer_groups = zyre_peer_groups(_node);
+        if (peer_groups) {
+            const char *peer_group = reinterpret_cast<const char *>(zlist_first(peer_groups));
+            while (peer_group) {
+                groups.emplace(peer_group);
+                peer_group = reinterpret_cast<const char*>(zlist_next(peer_groups));
+            }
+
+            zlist_destroy(&peer_groups);
+        }
+
+        std::set<std::string> own_groups = get_own_groups();
+        groups.insert(own_groups.begin(), own_groups.end());
+    }
+
+    return groups;
+}
+
+MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_own_groups() {
+    std::set<std::string> groups;
+
+    if (_node) {
+        zlist_t* peer_groups = zyre_own_groups(_node);
+        if (peer_groups) {
+            const char *peer_group = reinterpret_cast<const char *>(zlist_first(peer_groups));
+            while (peer_group) {
+                groups.emplace(peer_group);
+                peer_group = reinterpret_cast<const char*>(zlist_next(peer_groups));
+            }
+
+            zlist_destroy(&peer_groups);
+        }
+    }
+
+    return groups;
+}
+
+MQ2DANNET_NODE_API const std::map<std::string, std::set<std::string>> MQ2DanNet::Node::get_group_peers() {
+    std::map<std::string, std::set<std::string> > group_peers;
+
+    if (_node) {
+        std::set<std::string> groups = get_all_groups();
+        for (auto group : groups) {
+            group_peers[group] = get_group_peers(group);
+        }
+    }
+
+    return group_peers;
+}
+
+MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_group_peers(const std::string & group) {
+    std::set<std::string> peers;
+
+    if (_node) {
+        zlist_t* z_peers = zyre_peers_by_group(_node, group.c_str());
+        if (z_peers) {
+            const char *z_peer = reinterpret_cast<const char*>(zlist_first(z_peers));
+            while (z_peer) {
+                peers.emplace(z_peer);
+                z_peer = reinterpret_cast<const char*>(zlist_next(z_peers));
+            }
+
+            zlist_destroy(&z_peers);
+        }
+    }
+
+    return peers;
 }
 
 MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_interfaces() {
@@ -421,24 +565,9 @@ void Node::node_actor(zsock_t *pipe, void *args) {
         zyre_set_interface(node->_node, szInterface);
     }
 
-    zyre_set_header(node->_node, "HEADER KEY", "%s", "HEADER VAL"); // this isn't necessary, just testing it
+    // send our node name for easier name recognition
+    zyre_set_header(node->_node, "name", "%s", node->_node_name.c_str());
     zyre_start(node->_node);
-
-    // guarantee that we are in the groups we think we are in
-    zlist_t *groups = zyre_own_groups(node->_node);
-    const char *group = reinterpret_cast<const char *>(zlist_first(groups));
-    std::set<std::string> groups_set;
-    while (group) {
-        groups_set.emplace(group);
-        group = reinterpret_cast<const char*>(zlist_next(groups));
-    }
-    zlist_destroy(&groups);
-
-    std::set<std::string> groups_diff;
-    std::set_difference(groups_set.begin(), groups_set.end(), node->_groups.begin(), node->_groups.end(), std::inserter(groups_diff, groups_diff.begin()));
-    for (auto unjoined : groups_diff) {
-        node->join(unjoined);
-    }
 
     zsock_signal(pipe, 0); // ready signal, required by zactor contract
     
@@ -511,24 +640,17 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 std::string uuid = init_string(zyre_event_peer_uuid(z_event));
                 if (uuid.empty()) {
                     DebugSpewAlways("MQ2DanNet: ENTER with empty UUID for name %s, will not add to peers list.", name.c_str());
-                } else {
-                    // create or replace
-                    node->_peers[name] = uuid;
                 }
+                //DebugSpewAlways("%s is ENTERing.", name.c_str());
             } else if (event_type == "EXIT") {
-                // remove from groups too, even though LEAVE should take care of this
-                for (auto _peer_list : node->_group_peers) {
-                    _peer_list.second.erase(name);
-                }
-
-                node->_peers.erase(name);
+                // nothing to do here
+                //DebugSpewAlways("%s is EXITing.", name.c_str());
             } else if (event_type == "JOIN") {
                 std::string group = init_string(zyre_event_group(z_event));
 
                 if (group.empty()) {
                     DebugSpewAlways("MQ2DanNet: JOIN with empty group with name %s, will not add to lists.", name.c_str());
                 } else {
-                    node->_group_peers[group].emplace(name); // [] means that we will create or access
                     for (auto callback_it = node->_join_callbacks.begin(); callback_it != node->_join_callbacks.end(); ) {
                         if ((*callback_it)(name, group))
                             node->_join_callbacks.erase(callback_it);
@@ -543,13 +665,6 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 if (group.empty()) {
                     DebugSpewAlways("MQ2DanNet: LEAVE with empty group with name %s, will not remove from lists.", name.c_str());
                 } else {
-                    auto list_it = node->_group_peers.find(group);
-                    if (list_it != node->_group_peers.end()) {
-                        list_it->second.erase(name);
-                        if (list_it->second.empty())
-                            node->_group_peers.erase(list_it);
-                    }
-
                     for (auto callback_it = node->_leave_callbacks.begin(); callback_it != node->_leave_callbacks.end(); ) {
                         if ((*callback_it)(name, group))
                             node->_leave_callbacks.erase(callback_it);
@@ -588,7 +703,9 @@ void Node::node_actor(zsock_t *pipe, void *args) {
             } else if (event_type == "EVASIVE") {
                 // not sure if anything needs to be done here?
                 // also, turns out this is done a lot so let's just mute it to reduce spam
-                //DebugSpewAlways("%s is being evasive.", name.c_str());
+                //TODO: need to maintain a keepalive list so we can remove peers that have disconnected (how to force remove peers? it might be a command to the actor, look this up.)
+                //auto tick = MQGetTickCount64();
+                //DebugSpewAlways("%s is being evasive at %ull.", name.c_str(), tick);
             } else {
                 DebugSpewAlways("MQ2DanNet: Got unhandled event type %s.", event_type.c_str());
             }
@@ -599,8 +716,9 @@ void Node::node_actor(zsock_t *pipe, void *args) {
 
     zpoller_destroy(&poller);
 
-    for (auto _group : node->_groups)
-        node->leave(_group);
+    auto groups = node->get_own_groups();
+    for (auto group : groups)
+        node->leave(group);
 
     zyre_stop(node->_node);
     zclock_sleep(100);
@@ -709,11 +827,21 @@ Node::Node() {}
 Node::~Node() {}
 
 std::string MQ2DanNet::Node::peers_arr() {
-    std::string delimiter = "|";
-    return std::accumulate(_peers.cbegin(), _peers.cend(), std::string(),
-        [delimiter](const std::string& s, const std::pair<const std::string, std::string>& p) {
-        return s + (s.empty() ? std::string() : delimiter) + p.first;
-    });
+    if (_node) {
+        std::set<std::string> peers_ref = get_peers();
+        std::set<std::string>peers;
+        std::transform(peers_ref.begin(), peers_ref.end(), std::inserter(peers, peers.begin()), [node(_node)](std::string peer) -> std::string {
+            return zyre_peer_header_value(node, peer.c_str(), "name");
+        });
+
+        std::string delimiter = "|";
+        return std::accumulate(peers.cbegin(), peers.cend(), std::string(),
+            [delimiter](const std::string& s, const std::string& p) {
+            return s + (s.empty() ? std::string() : delimiter) + p;
+        });
+    }
+
+    return std::string();
 }
 
 Node::Observation MQ2DanNet::Node::query(const std::string& query) {
