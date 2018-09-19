@@ -264,10 +264,11 @@ namespace MQ2DanNet {
                 zlist_t* peers = zyre_peers(_node);
 
                 if (peers) {
+                    std::string full_name = get_full_name(name);
                     const char* z_peer = reinterpret_cast<const char*>(zlist_first(peers));
                     while (z_peer) {
                         std::string peer_name(zyre_peer_header_value(_node, z_peer, "name"));
-                        if (name == peer_name) {
+                        if (full_name == peer_name) {
                             uuid = z_peer;
                             break;
                         }
@@ -311,6 +312,9 @@ namespace MQ2DanNet {
         // smartly reads/sets/clears _current_query
         Observation query(const std::string& query);
         void query_result(const Observation& obs);
+        std::string trim_query(const std::string& query);
+        bool parse_query(const std::string& query, MQ2TYPEVAR& Result);
+        bool parse_response(const std::string& type, const std::string& data, MQ2TYPEVAR& Result);
 
         bool debugging(bool debugging) { _debugging = debugging; return _debugging; }
         bool debugging() { return _debugging; }
@@ -873,8 +877,10 @@ std::string MQ2DanNet::Node::groups_arr(bool all = true) {
 }
 
 Node::Observation MQ2DanNet::Node::query(const std::string& query) {
-    if (query.empty() || query != _current_query) {
-        _current_query = query;
+    std::string final_query = trim_query(query);
+
+    if (final_query.empty() || final_query != _current_query) {
+        _current_query = final_query;
         _query_result = Observation();
     }
 
@@ -883,6 +889,55 @@ Node::Observation MQ2DanNet::Node::query(const std::string& query) {
 
 void MQ2DanNet::Node::query_result(const Observation& obs) {
     _query_result = obs;
+}
+
+std::string MQ2DanNet::Node::trim_query(const std::string& query) {
+    std::string final_query = std::regex_replace(query, std::regex("\\$\\\\\\{"), "${");
+
+    if (final_query.front() == '"')
+        final_query.erase(final_query.begin(), final_query.begin() + 1);
+
+    if (final_query.back() == '"')
+        final_query.erase(final_query.end() - 1);
+
+    if (final_query.find_first_of("${") == 0)
+        final_query.erase(final_query.begin(), final_query.begin() + 2);
+
+    if (final_query.back() == '}')
+        final_query.erase(final_query.end() - 1);
+
+    return final_query;
+}
+
+bool MQ2DanNet::Node::parse_query(const std::string& query, MQ2TYPEVAR& Result) {
+    CHAR szQuery[MAX_STRING];
+    strcpy_s(szQuery, query.c_str());
+    Result.Type = 0;
+    Result.Int64 = 0;
+
+    // Since we don't surround the query with ${}, we want to parse all the variables specified inside
+    ParseMacroData(szQuery, MAX_STRING);
+
+    // Then after all of that, we need to Evaluate the entire thing as a single variable
+    // Can retrieve this data with `FindMQ2DataType(Result.Type->GetName());` and then `Result.Type->FromString(Result.VarPtr, szBuf);`
+    return ParseMQ2DataPortion(szQuery, Result) && Result.Type;
+}
+
+bool MQ2DanNet::Node::parse_response(const std::string& type, const std::string& data, MQ2TYPEVAR& Result) {
+    Result.Type = 0;
+    Result.Int64 = 0;
+
+    CHAR szBuf[MAX_STRING] = { 0 };
+    strcpy_s(szBuf, type.c_str());
+    Result.Type = FindMQ2DataType(szBuf);
+
+    strcpy_s(szBuf, data.c_str());
+    if (Result.Type && Result.Type->FromString(Result.VarPtr, szBuf)) {
+        return true;
+    } else {
+        Result.Type = 0;
+        Result.Int64 = 0;
+    }
 }
 
 void Node::enter() {
@@ -1019,36 +1074,21 @@ const bool MQ2DanNet::Query::callback(std::stringstream&& args) {
         std::stringstream send_stream;
         Archive<std::stringstream> send(send_stream);
 
-        PCHARINFO pChar = GetCharInfo();
-        if (pChar) {
-            std::string final_request = std::regex_replace(request, std::regex("\\$\\\\\\{"), "${");
+        MQ2TYPEVAR Result;
+        if (Node::get().parse_query(request, Result)) {
+            CHAR szBuf[MAX_STRING] = { 0 };
+            strcpy_s(szBuf, Result.Type->GetName());
+            if (!szBuf) strcpy_s(szBuf, "NULL");
+            send << szBuf;
 
-            CHAR szQuery[MAX_STRING];
-            strcpy_s(szQuery, final_request.c_str());
-            MQ2TYPEVAR Result;
-
-            // Since we don't surround the query with ${}, we want to parse all the variables specified inside
-            ParseMacroData(szQuery, MAX_STRING);
-            // Then after all of that, we need to Evaluate the entire thing as a single variable
-            // Can retrieve this data with `FindMQ2DataType(Result.Type->GetName());` and then `Result.Type->FromString(Result.VarPtr, szBuf);`
-            if (ParseMQ2DataPortion(szQuery, Result) && Result.Type) {
-                CHAR szBuf[MAX_STRING] = { 0 };
-                strcpy_s(szBuf, Result.Type->GetName());
-                if (!szBuf) strcpy_s(szBuf, "NULL");
-                send << szBuf;
-
-                Result.Type->ToString(Result.VarPtr, szBuf);
-                if (!szBuf) strcpy_s(szBuf, "NULL");
-                send << szBuf;
-            } else {
-                send << "NULL" << "NULL";
-            }
-
-            Node::get().respond(from, key, std::move(send_stream));
+            Result.Type->ToString(Result.VarPtr, szBuf);
+            if (!szBuf) strcpy_s(szBuf, "NULL");
+            send << szBuf;
         } else {
-            DebugSpewAlways("MQ2DanNet::Query::callback -- failed to GetCharInfo(), sending empty response.");
-            Node::get().respond(from, key, std::move(std::stringstream()));
+            send << "NULL" << "NULL";
         }
+
+        Node::get().respond(from, key, std::move(send_stream));
 
         return false;
     } catch (std::runtime_error&) {
@@ -1062,8 +1102,10 @@ std::stringstream MQ2DanNet::Query::pack(const std::string& request) {
     std::stringstream send_stream;
     Archive<std::stringstream> send(send_stream);
 
+    std::string final_request = Node::get().trim_query(request);
+
     Node::get().query(""); // first clear -- we want a Query message to get a fresh response
-    Node::get().query(request); // now set our most recent request (the return won't matter here)
+    Node::get().query(final_request); // now set our most recent request (the return won't matter here)
     auto f = [](std::stringstream&& args) -> bool {
         Archive<std::stringstream> ar(args);
         std::string from;
@@ -1075,18 +1117,13 @@ std::stringstream MQ2DanNet::Query::pack(const std::string& request) {
             ar >> from >> group >> type >> data;
 
             MQ2TYPEVAR Result;
+            Node::get().parse_response(type, data, Result);
+            Node::get().query_result(Node::Observation(Result, MQGetTickCount64()));
 
-            CHAR szBuf[MAX_STRING] = { 0 };
-            strcpy_s(szBuf, type.c_str());
-            Result.Type = FindMQ2DataType(szBuf);
-
-            strcpy_s(szBuf, data.c_str());
-            if (Result.Type && Result.Type->FromString(Result.VarPtr, szBuf)) {
-                Node::get().query_result(Node::Observation(Result, MQGetTickCount64()));
-                if (Node::get().debugging())
+            if (Node::get().debugging()) {
+                if (Result.Type)
                     WriteChatf("%s : %s -- %llu (%llu)", type.c_str(), data.c_str(), Node::get().read(group).received, MQGetTickCount64());
-            } else {
-                if (Node::get().debugging())
+                else
                     WriteChatf("%s : %s -- Failed to read data %llu.", type.c_str(), data.c_str(), MQGetTickCount64());
             }
         } catch (std::runtime_error&) {
@@ -1097,7 +1134,7 @@ std::stringstream MQ2DanNet::Query::pack(const std::string& request) {
     };
 
     std::string key = Node::get().register_response(f);
-    send << key << request;
+    send << key << final_request;
 
     return send_stream;
 }
@@ -1114,18 +1151,12 @@ const bool MQ2DanNet::Observe::callback(std::stringstream&& args) {
         received >> from >> group >> key >> query;
         DebugSpewAlways("OBSERVE --> FROM: %s, GROUP: %s, QUERY: %s", from.c_str(), group.c_str(), query.c_str());
 
-        std::string final_query = std::regex_replace(query, std::regex("\\$\\\\\\{"), "${");
-
-        CHAR szQuery[MAX_STRING];
-        strcpy_s(szQuery, final_query.c_str());
-        MQ2TYPEVAR Result;
-
         std::stringstream args;
         Archive<std::stringstream> ar(args);
 
         // only install the observer if it is a valid query
-        ParseMacroData(szQuery, MAX_STRING);
-        if (ParseMQ2DataPortion(szQuery, Result) && Result.Type) {
+        MQ2TYPEVAR Result;
+        if (Node::get().parse_query(query, Result)) {
             std::string return_group = Node::get().register_observer(from.c_str(), query.c_str());
             ar << return_group;
         } else {
@@ -1144,8 +1175,10 @@ std::stringstream MQ2DanNet::Observe::pack(const std::string& query) {
     std::stringstream send_stream;
     Archive<std::stringstream> send(send_stream);
 
+    std::string final_query = Node::get().trim_query(query);
+
     // this is the callback to actually start observing. We can't just do it because the observed will come back with the right group 
-    auto f = [query](std::stringstream&& args) -> bool {
+    auto f = [final_query](std::stringstream&& args) -> bool {
         Archive<std::stringstream> ar(args);
         std::string from;
         std::string group;
@@ -1154,7 +1187,7 @@ std::stringstream MQ2DanNet::Observe::pack(const std::string& query) {
         try {
             ar >> from >> group >> new_group;
             if (new_group != "NULL") {
-                Node::get().observe(new_group, from, query);
+                Node::get().observe(new_group, from, final_query);
             }
         } catch (std::runtime_error&) {
             DebugSpewAlways("MQ2DanNet::Observe -- response -- Failed to deserialize.");
@@ -1165,7 +1198,7 @@ std::stringstream MQ2DanNet::Observe::pack(const std::string& query) {
 
     // this registers the response from the observed that responds with a group name
     std::string key = Node::get().register_response(f);
-    send << key << query;
+    send << key << final_query;
     return send_stream;
 }
 
@@ -1181,19 +1214,15 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
         DebugSpewAlways("UPDATE --> FROM: %s, GROUP: %s, DATA: %s", from.c_str(), group.c_str(), data.c_str());
 
         MQ2TYPEVAR Result;
+        Node::get().parse_response(type, data, Result);
+        Node::get().update(group, Result);
 
-        CHAR szBuf[MAX_STRING] = { 0 };
-        strcpy_s(szBuf, type.c_str());
-        Result.Type = FindMQ2DataType(szBuf);
-        
-        strcpy_s(szBuf, data.c_str());
-        if (Result.Type && Result.Type->FromString(Result.VarPtr, szBuf)) {
-            Node::get().update(group, Result);
-            if (Node::get().debugging())
+        if (Node::get().debugging()) {
+            if (Result.Type)
                 WriteChatf("%s : %s -- %llu (%llu)", type.c_str(), data.c_str(), Node::get().read(group).received, MQGetTickCount64());
-        } else {
-            if (Node::get().debugging())
-                WriteChatf("%s : %s -- Failed to read data %llu.", type.c_str(), data.c_str(), MQGetTickCount64());
+            else
+                if (Node::get().debugging())
+                    WriteChatf("%s : %s -- Failed to read data %llu.", type.c_str(), data.c_str(), MQGetTickCount64());
         }
     } catch (std::runtime_error&) {
         DebugSpewAlways("MQ2DanNet::Update -- failed to deserialize.");
@@ -1206,33 +1235,18 @@ std::stringstream MQ2DanNet::Update::pack(const std::string& query) {
     std::stringstream send_stream;
     Archive<std::stringstream> send(send_stream);
 
-    PCHARINFO pChar = GetCharInfo();
-    if (pChar) {
-        std::string final_query = std::regex_replace(query, std::regex("\\$\\\\\\{"), "${");
+    MQ2TYPEVAR Result;
+    if (Node::get().parse_query(query, Result)) {
+        CHAR szBuf[MAX_STRING] = { 0 };
+        strcpy_s(szBuf, Result.Type->GetName());
+        if (!szBuf) strcpy_s(szBuf, "NULL");
+        send << szBuf;
 
-        CHAR szQuery[MAX_STRING];
-        strcpy_s(szQuery, final_query.c_str());
-        MQ2TYPEVAR Result;
-
-        // Since we don't surround the query with ${}, we want to parse all the variables specified inside
-        ParseMacroData(szQuery, MAX_STRING);
-        // Then after all of that, we need to Evaluate the entire thing as a single variable
-        // Can retrieve this data with `FindMQ2DataType(Result.Type->GetName());` and then `Result.Type->FromString(Result.VarPtr, szBuf);`
-        if (ParseMQ2DataPortion(szQuery, Result) && Result.Type) {
-            CHAR szBuf[MAX_STRING] = { 0 };
-            strcpy_s(szBuf, Result.Type->GetName());
-            if (!szBuf) strcpy_s(szBuf, "NULL");
-            send << szBuf;
-
-            Result.Type->ToString(Result.VarPtr, szBuf);
-            if (!szBuf) strcpy_s(szBuf, "NULL");
-            send << szBuf;
-        } else {
-            send << "NULL" << "NULL";
-        }
-
+        Result.Type->ToString(Result.VarPtr, szBuf);
+        if (!szBuf) strcpy_s(szBuf, "NULL");
+        send << szBuf;
     } else {
-        DebugSpewAlways("MQ2DanNet::Update::pack -- failed to GetCharInfo(), sending empty response.");
+        send << "NULL" << "NULL";
     }
 
     return send_stream;
