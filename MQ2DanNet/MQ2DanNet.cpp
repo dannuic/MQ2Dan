@@ -570,11 +570,9 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     node->_node = zyre_new(node->_node_name.c_str());
     if (!node->_node) throw new std::invalid_argument("Could not create node");
 
-    CHAR szInterface[MAX_STRING] = { 0 };
-    GetPrivateProfileString("MQ2DanNet", "Interface", "", szInterface, MAX_STRING, INIFileName);
-    if (szInterface && strlen(szInterface) > 0) {
-        zyre_set_interface(node->_node, szInterface);
-    }
+    std::string iface = ReadVar("General", "Interface");
+    if (!iface.empty())
+        zyre_set_interface(node->_node, iface.c_str());
 
     // send our node name for easier name recognition
     zyre_set_header(node->_node, "name", "%s", node->_node_name.c_str());
@@ -1398,6 +1396,24 @@ BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR &Dest) {
     return true;
 }
 
+std::string GetDefault(const std::string& val) {
+    if (val == "Debugging")
+        return std::string("off");
+
+    return std::string();
+}
+
+std::string ReadVar(const std::string& section, const std::string& key) {
+    CHAR szBuf[MAX_STRING] = { 0 };
+    GetPrivateProfileString(section.c_str(), key.c_str(), GetDefault(key).c_str(), szBuf, MAX_STRING, INIFileName);
+
+    return std::string(szBuf);
+}
+
+VOID SetVar(const std::string& section, const std::string& key, const std::string& val) {
+    WritePrivateProfileString(section.c_str(), key.c_str(), val == GetDefault(val) ? NULL : val.c_str(), INIFileName);
+}
+
 PLUGIN_API VOID DInfoCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     CHAR szParam[MAX_STRING] = { 0 };
     GetArg(szParam, szLine, 1);
@@ -1405,8 +1421,13 @@ PLUGIN_API VOID DInfoCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     if (szParam && !strcmp(szParam, "interface")) {
         GetArg(szParam, szLine, 2);
         if (szParam && strlen(szParam) > 0) {
-            WritePrivateProfileString("MQ2DanNet", "Interface", szParam, INIFileName);
-            WriteChatf("MQ2DanNet: Set interface to %s", szParam);
+            if (!strcmp(szParam, "clear")) {
+                SetVar("General", "Interface", std::string());
+                WriteChatf("MQ2DanNet: Cleared interface setting.");
+            } else {
+                SetVar("General", "Interface", szParam);
+                WriteChatf("MQ2DanNet: Set interface to %s", szParam);
+            }
         } else {
             WriteChatf("MQ2DanNet: Interfaces --\r\n%s", Node::get().get_interfaces());
         }
@@ -1414,13 +1435,12 @@ PLUGIN_API VOID DInfoCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         GetArg(szParam, szLine, 2);
         if (szParam && !strcmp(szParam, "on")) {
             Node::get().debugging(true);
-            WritePrivateProfileString("MQ2DanNet", "Debugging", "1", INIFileName);
+            SetVar("General", "Debugging", "on");
         } else if (szParam && !strcmp(szParam, "off")) {
             Node::get().debugging(false);
-            WritePrivateProfileString("MQ2DanNet", "Debugging", "0", INIFileName);
+            SetVar("General", "Debugging", "off");
         } else {
             Node::get().debugging(!Node::get().debugging());
-            WritePrivateProfileString("MQ2DanNet", "Debugging", Node::get().debugging() ? "1" : "0", INIFileName);
         }
     } else {
         WriteChatf("%s", Node::get().get_info().c_str());
@@ -1582,7 +1602,7 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     Node::get().register_command<MQ2DanNet::Observe>();
     Node::get().register_command<MQ2DanNet::Update>();
 
-    Node::get().debugging(GetPrivateProfileInt("MQ2DanNet", "Debugging", 0, INIFileName) != 0);
+    Node::get().debugging(ReadVar("General", "Debugging") == "on");
 
     AddCommand("/dinfo", DInfoCommand);
     AddCommand("/djoin", DJoinCommand);
