@@ -243,6 +243,8 @@ namespace MQ2DanNet {
         Observation _query_result;
 
         bool _debugging;
+        bool _local_echo;
+        bool _command_echo;
 
         // explicitly prevent copy/move operations.
         Node(const Node&) = delete;
@@ -318,6 +320,12 @@ namespace MQ2DanNet {
 
         bool debugging(bool debugging) { _debugging = debugging; return _debugging; }
         bool debugging() { return _debugging; }
+
+        bool local_echo(bool local_echo) { _local_echo = local_echo; return _local_echo; }
+        bool local_echo() { return _local_echo; }
+
+        bool command_echo(bool command_echo) { _command_echo = command_echo; return _command_echo; }
+        bool command_echo() { return _command_echo; }
 
         void enter();
         void exit();
@@ -570,9 +578,10 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     node->_node = zyre_new(node->_node_name.c_str());
     if (!node->_node) throw new std::invalid_argument("Could not create node");
 
-    std::string iface = ReadVar("General", "Interface");
-    if (!iface.empty())
-        zyre_set_interface(node->_node, iface.c_str());
+    CHAR szBuf[MAX_STRING] = { 0 };
+    GetPrivateProfileString("General", "Interface", NULL, szBuf, MAX_STRING, INIFileName);
+    if (szBuf && szBuf[0] != '\0')
+        zyre_set_interface(node->_node, szBuf);
 
     // send our node name for easier name recognition
     zyre_set_header(node->_node, "name", "%s", node->_node_name.c_str());
@@ -1033,10 +1042,12 @@ const bool MQ2DanNet::Execute::callback(std::stringstream&& args) {
 
         std::string final_command = std::regex_replace(command, std::regex("\\$\\\\\\{"), "${");
 
-        if (group.empty()) {
-            WriteChatf("\ax\a-o[\ax\ao %s \ax\a-o]\ax \aw%s\ax", from.c_str(), final_command.c_str());
-        } else {
-            WriteChatf("\ax\a-o[\ax\ao %s\ax\a-o (%s) ]\ax \aw%s\ax", from.c_str(), group.c_str(), final_command.c_str());
+        if (Node::get().command_echo()) {
+            if (group.empty()) {
+                WriteChatf("\ax\a-o[\ax\ao %s \ax\a-o]\ax \aw%s\ax", from.c_str(), final_command.c_str());
+            } else {
+                WriteChatf("\ax\a-o[\ax\ao %s\ax\a-o (%s) ]\ax \aw%s\ax", from.c_str(), group.c_str(), final_command.c_str());
+            }
         }
 
         CHAR szCommand[MAX_STRING] = { 0 };
@@ -1219,8 +1230,7 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
             if (Result.Type)
                 WriteChatf("%s : %s -- %llu (%llu)", type.c_str(), data.c_str(), Node::get().read(group).received, MQGetTickCount64());
             else
-                if (Node::get().debugging())
-                    WriteChatf("%s : %s -- Failed to read data %llu.", type.c_str(), data.c_str(), MQGetTickCount64());
+                WriteChatf("%s : %s -- Failed to read data %llu.", type.c_str(), data.c_str(), MQGetTickCount64());
         }
     } catch (std::runtime_error&) {
         DebugSpewAlways("MQ2DanNet::Update -- failed to deserialize.");
@@ -1399,6 +1409,10 @@ BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR &Dest) {
 std::string GetDefault(const std::string& val) {
     if (val == "Debugging")
         return std::string("off");
+    else if (val == "Local Echo")
+        return std::string("on");
+    else if (val == "Command Echo")
+        return std::string("on");
 
     return std::string();
 }
@@ -1412,6 +1426,27 @@ std::string ReadVar(const std::string& section, const std::string& key) {
 
 VOID SetVar(const std::string& section, const std::string& key, const std::string& val) {
     WritePrivateProfileString(section.c_str(), key.c_str(), val == GetDefault(val) ? NULL : val.c_str(), INIFileName);
+}
+
+BOOL ParseBool(const std::string& section, const std::string& key, const std::string& input, bool current) {
+    if (input == "on" || input == "off")
+        WriteChatf("\ax\atMQ2DanNet:\ax Turning \ao%s\ax to \ar%s\ax.", key.c_str(), input.c_str());
+    else
+        WriteChatf("\ax\atMQ2DanNet:\ax Turning \ao%s\ax to \ar%s\ax.", key.c_str(), current ? "off" : "on");
+
+    if (input == "on") {
+        SetVar(section, key, "on");
+        return true;
+    } else if (input == "off") {
+        SetVar(section, key, "off");
+        return false;
+    } else {
+        return !current;
+    }
+}
+
+BOOL ReadBool(const std::string& section, const std::string& key) {
+    return ReadVar(section, key) == "on";
 }
 
 PLUGIN_API VOID DInfoCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
@@ -1433,15 +1468,13 @@ PLUGIN_API VOID DInfoCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         }
     } else if (szParam && !strcmp(szParam, "debug")) {
         GetArg(szParam, szLine, 2);
-        if (szParam && !strcmp(szParam, "on")) {
-            Node::get().debugging(true);
-            SetVar("General", "Debugging", "on");
-        } else if (szParam && !strcmp(szParam, "off")) {
-            Node::get().debugging(false);
-            SetVar("General", "Debugging", "off");
-        } else {
-            Node::get().debugging(!Node::get().debugging());
-        }
+        Node::get().debugging(ParseBool("General", "Debugging", szParam, Node::get().debugging()));
+    } else if (szParam && !strcmp(szParam, "localecho")) {
+        GetArg(szParam, szLine, 2);
+        Node::get().local_echo(ParseBool("General", "Local Echo", szParam, Node::get().local_echo()));
+    } else if (szParam && !strcmp(szParam, "commandecho")) {
+        GetArg(szParam, szLine, 2);
+        Node::get().command_echo(ParseBool("General", "Command Echo", szParam, Node::get().command_echo()));
     } else {
         WriteChatf("%s", Node::get().get_info().c_str());
     }
@@ -1521,7 +1554,8 @@ PLUGIN_API VOID DExecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     else {
         name = Node::get().get_full_name(name);
 
-        WriteChatf("\ax\a-o[ \ax\ao-->\ax\a-o(%s) ]\ax \aw%s\ax", name.c_str(), command.c_str());
+        if (Node::get().local_echo())
+            WriteChatf("\ax\a-o[ \ax\ao-->\ax\a-o(%s) ]\ax \aw%s\ax", name.c_str(), command.c_str());
         Node::get().whisper<MQ2DanNet::Execute>(name, command);
     }
 }
@@ -1538,7 +1572,8 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     if (group.empty() || command.empty())
         WriteChatColor("Syntax: /dgexecute <group> <command> -- direct group to execute command", USERCOLOR_DEFAULT);
     else {
-        WriteChatf("\ax\a-o[\ax\ao -->\ax\a-o(%s) ]\ax \aw%s\ax", group.c_str(), command.c_str());
+        if (Node::get().local_echo())
+            WriteChatf("\ax\a-o[\ax\ao -->\ax\a-o(%s) ]\ax \aw%s\ax", group.c_str(), command.c_str());
         Node::get().shout<MQ2DanNet::Execute>(group, command);
     }
 }
@@ -1555,7 +1590,8 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     if (group.empty() || command.empty())
         WriteChatColor("Syntax: /dgaexecute <group> <command> -- direct group to execute command", USERCOLOR_DEFAULT);
     else {
-        WriteChatf("\ax\a-o[\ax\ao -->\ax\a-o(%s) ]\ax \aw%s\ax", group.c_str(), command.c_str());
+        if (Node::get().local_echo())
+            WriteChatf("\ax\a-o[\ax\ao -->\ax\a-o(%s) ]\ax \aw%s\ax", group.c_str(), command.c_str());
         Node::get().shout<MQ2DanNet::Execute>(group, command);
 
         std::string final_command = std::regex_replace(command, std::regex("\\$\\\\\\{"), "${");
@@ -1602,7 +1638,9 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     Node::get().register_command<MQ2DanNet::Observe>();
     Node::get().register_command<MQ2DanNet::Update>();
 
-    Node::get().debugging(ReadVar("General", "Debugging") == "on");
+    Node::get().debugging(ReadBool("General", "Debugging"));
+    Node::get().local_echo(ReadBool("General", "Local Echo"));
+    Node::get().command_echo(ReadBool("General", "Command Echo"));
 
     AddCommand("/dinfo", DInfoCommand);
     AddCommand("/djoin", DJoinCommand);
