@@ -1449,7 +1449,7 @@ BOOL ReadBool(const std::string& section, const std::string& key) {
     return ReadVar(section, key) == "on";
 }
 
-PLUGIN_API VOID DInfoCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
+PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     CHAR szParam[MAX_STRING] = { 0 };
     GetArg(szParam, szLine, 1);
 
@@ -1458,13 +1458,13 @@ PLUGIN_API VOID DInfoCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         if (szParam && strlen(szParam) > 0) {
             if (!strcmp(szParam, "clear")) {
                 SetVar("General", "Interface", std::string());
-                WriteChatf("MQ2DanNet: Cleared interface setting.");
+                WriteChatf("\ax\atMQ2DanNet:\ax Cleared interface setting.");
             } else {
                 SetVar("General", "Interface", szParam);
-                WriteChatf("MQ2DanNet: Set interface to %s", szParam);
+                WriteChatf("\ax\atMQ2DanNet:\ax Set interface to \ay%s\ax", szParam);
             }
         } else {
-            WriteChatf("MQ2DanNet: Interfaces --\r\n%s", Node::get().get_interfaces());
+            WriteChatf("\ax\atMQ2DanNet:\ax Interfaces --\r\n\ay%s\ax", Node::get().get_interfaces());
         }
     } else if (szParam && !strcmp(szParam, "debug")) {
         GetArg(szParam, szLine, 2);
@@ -1475,8 +1475,15 @@ PLUGIN_API VOID DInfoCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     } else if (szParam && !strcmp(szParam, "commandecho")) {
         GetArg(szParam, szLine, 2);
         Node::get().command_echo(ParseBool("General", "Command Echo", szParam, Node::get().command_echo()));
-    } else {
+    } else if (szParam && !strcmp(szParam, "info")) {
         WriteChatf("%s", Node::get().get_info().c_str());
+    } else {
+        WriteChatf("\ax\atMQ2DanNet:\ax unrecognized /dnet argument \ar%s\ax. Valid arguments are: ", szParam);
+        WriteChatf("           \ayinterface [<iface_name>]\ax -- force interface to iface_name");
+        WriteChatf("           \aydebug [on|off]\ax -- turn debug on or off");
+        WriteChatf("           \aylocalecho [on|off]\ax -- turn localecho on or off");
+        WriteChatf("           \aycommandecho [on|off]\ax -- turn commandecho on or off");
+        WriteChatf("           \ayinfo\ax -- output group/peer information");
     }
 }
 
@@ -1642,7 +1649,7 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     Node::get().local_echo(ReadBool("General", "Local Echo"));
     Node::get().command_echo(ReadBool("General", "Command Echo"));
 
-    AddCommand("/dinfo", DInfoCommand);
+    AddCommand("/dnet", DNetCommand);
     AddCommand("/djoin", DJoinCommand);
     AddCommand("/dleave", DLeaveCommand);
     AddCommand("/dtell", DTellCommand);
@@ -1670,7 +1677,7 @@ PLUGIN_API VOID ShutdownPlugin(VOID) {
     Node::get().unregister_command<MQ2DanNet::Observe>();
     Node::get().unregister_command<MQ2DanNet::Update>();
 
-    RemoveCommand("/dinfo");
+    RemoveCommand("/dnet");
     RemoveCommand("/djoin");
     RemoveCommand("/dleave");
     RemoveCommand("/dtell");
