@@ -50,3 +50,4 @@ I have added some simple echo commands in addition to `/dinfo` and `/dobserve`, 
 * `/dexecute <name> <command>` -- executes a command on peer's client
 * `/dgexecute <group> <command>` -- executes a command on all clients in a group (except own)
 * `/dgaexecute <group> <command>` -- executes a command on all clients in a group (including own)
+* `/dnet [<arg>]` -- sets some variables, gives info, check  in-game output for use
