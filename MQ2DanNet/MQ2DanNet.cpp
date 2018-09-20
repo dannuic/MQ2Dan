@@ -242,6 +242,8 @@ namespace MQ2DanNet {
         std::string _current_query; // for the Query data member
         Observation _query_result;
 
+        std::set<std::string> _rejoin_groups;
+
         bool _debugging;
         bool _local_echo;
         bool _command_echo;
@@ -328,6 +330,9 @@ namespace MQ2DanNet {
 
         bool command_echo(bool command_echo) { _command_echo = command_echo; return _command_echo; }
         bool command_echo() { return _command_echo; }
+
+        void rejoin();
+        void save_channels();
 
         void enter();
         void exit();
@@ -597,6 +602,8 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     
     auto my_sock = zyre_socket(node->_node);
     zpoller_t *poller = zpoller_new(pipe, my_sock, (void*)NULL);
+
+    node->rejoin();
 
     // TODO: This doesn't appear necessary, but experiment with it
     //zpoller_set_nonstop(poller, true);
@@ -963,7 +970,20 @@ bool MQ2DanNet::Node::parse_response(const std::string& type, const std::string&
     } else {
         Result.Type = 0;
         Result.Int64 = 0;
+        return false;
     }
+}
+
+void MQ2DanNet::Node::rejoin() {
+    std::set<std::string> groups = _rejoin_groups;
+    _rejoin_groups.clear();
+
+    for (auto group : groups)
+        join(group);
+}
+
+void MQ2DanNet::Node::save_channels() {
+    _rejoin_groups = get_own_groups();
 }
 
 void Node::enter() {
@@ -1755,6 +1775,9 @@ PLUGIN_API VOID ShutdownPlugin(VOID) {
 
 // Called once directly after initialization, and then every time the gamestate changes
 PLUGIN_API VOID SetGameState(DWORD GameState) {
+    if (GameState == GAMESTATE_LOGGINGIN)
+        Node::get().save_channels(); // these will get rejoined on actor load
+
     // TODO: Figure out why we can't re-use the instance through zoning 
     // (it should be maintainable through the GAMESTATE_LOGGINGIN -> GAMESTATE_INGAME cycle, but causes my node instance to get memset to null)
     Node::get().exit();
@@ -1762,6 +1785,7 @@ PLUGIN_API VOID SetGameState(DWORD GameState) {
     // TODO: What about other gamestates? There is potential for messaging there, but the naming would be off without a character
     if (GameState == GAMESTATE_INGAME) {
         Node::get().enter();
+
         std::set<std::string> groups = Node::get().parse_arr(ReadVar("General", "Groups"));
         for (auto group : groups)
             Node::get().join(group);
@@ -1774,7 +1798,7 @@ PLUGIN_API VOID SetGameState(DWORD GameState) {
         auto pChar = GetCharInfo();
         if (pChar && pChar->pSpawn) {
             const std::string cls = Node::get().init_string(pEverQuest->GetClassThreeLetterCode(pChar->pSpawn->mActorClient.Class));
-            groups.emplace(Node::get().init_string(cls.c_str()));
+            groups.emplace(cls.c_str());
             for (auto category : { "Tank", "Priest", "Melee", "Caster" }) {
                 std::set<std::string> arr = Node::get().parse_arr(ReadVar("General", category));
                 if (arr.find(cls) != arr.end())
