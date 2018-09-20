@@ -4,3 +4,4 @@
 /zyre/libsodium/Release
 lib*.lib
 Release/
+Debug/
