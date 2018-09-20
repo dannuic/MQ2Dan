@@ -239,8 +239,8 @@ namespace MQ2DanNet {
         const std::string observer_group(const unsigned int key);
         void queue_command(const std::string& command, std::stringstream&& args);
 
-        std::string _current_query; // for the Query data member
-        Observation _query_result;
+        std::map<std::string, std::string> _current_query; // for the Query data member
+        std::map<std::string, Observation> _query_result;
 
         std::set<std::string> _rejoin_groups;
 
@@ -257,51 +257,58 @@ namespace MQ2DanNet {
         Node();
         ~Node();
 
-    public:
-        // IMPORTANT: these are not exposed as an API, this is on purpose! We need a single point of control for our node (this plugin)
-        std::string name() { return _node_name; }
-
+        // this is a private helper function ONLY THE STATIC ACTOR FUNCTION SHOULD CALL THIS
         std::string peer_uuid(const std::string& name) {
-            std::string uuid("");
+            std::string uuid;
 
-            if (_node) {
-                zlist_t* peers = zyre_peers(_node);
+            zlist_t* peers = zyre_peers(_node);
 
-                if (peers) {
-                    std::string full_name = get_full_name(name);
-                    const char* z_peer = reinterpret_cast<const char*>(zlist_first(peers));
-                    while (z_peer) {
-                        std::string peer_name(zyre_peer_header_value(_node, z_peer, "name"));
-                        if (full_name == peer_name) {
-                            uuid = z_peer;
-                            break;
-                        }
-
-                        z_peer = reinterpret_cast<const char*>(zlist_next(peers));
+            if (peers) {
+                std::string full_name = get_full_name(name);
+                const char* z_peer = reinterpret_cast<const char*>(zlist_first(peers));
+                while (z_peer) {
+                    std::string peer_name(zyre_peer_header_value(_node, z_peer, "name"));
+                    if (full_name == peer_name) {
+                        uuid = z_peer;
+                        break;
                     }
 
-                    zlist_destroy(&peers);
+                    z_peer = reinterpret_cast<const char*>(zlist_next(peers));
                 }
+
+                zlist_destroy(&peers);
             }
 
             return uuid;
         }
 
+
+    public:
+        // IMPORTANT: these are not exposed as an API, this is on purpose! We need a single point of control for our node (this plugin)
+        std::string name() { return _node_name; }
+
         bool has_peer(const std::string& peer) {
-            return !peer_uuid(peer).empty();
+            if (_actor) {
+                zmsg_t *msg = zmsg_new();
+                zmsg_pushstr(msg, peer.c_str());
+                zmsg_pushstr(msg, "PEER");
+                zmsg_send(&msg, _actor);
+
+                char *uuid = zstr_recv(_actor);
+                std::string ret;
+                if (uuid) {
+                    ret = uuid;
+                    zstr_free(&uuid);
+                }
+
+                return !ret.empty();
+            }
+
+            return false;
         }
 
         size_t peers() {
-            if (_node) {
-                zlist_t* peers = zyre_peers(_node);
-                if (peers) {
-                    size_t count = zlist_size(peers);
-                    zlist_destroy(&peers);
-                    return count;
-                }
-            }
-
-            return 0;
+            return get_peers().size();
         }
 
         bool is_in_group(const std::string& group) {
@@ -309,15 +316,10 @@ namespace MQ2DanNet {
             return groups.find(group) != groups.end();
         }
 
-        std::string peers_arr();
-        std::string peers_arr(const std::string& group);
-        std::string groups_arr(bool all);
-        std::string create_arr(const std::set<std::string>& members);
-        std::set<std::string> parse_arr(const std::string& arr);
 
         // smartly reads/sets/clears _current_query
-        Observation query(const std::string& query);
-        void query_result(const Observation& obs);
+        Observation query(const std::string& name, const std::string& query);
+        void query_result(const std::string& name, const Observation& obs);
         std::string trim_query(const std::string& query);
         bool parse_query(const std::string& query, MQ2TYPEVAR& Result);
         bool parse_response(const std::string& type, const std::string& data, MQ2TYPEVAR& Result);
@@ -371,11 +373,21 @@ MQ2DANNET_NODE_API Node& Node::get() {
 }
 
 MQ2DANNET_NODE_API void Node::join(const std::string& group) {
-    if (_node) zyre_join(_node, group.c_str());
+    if (_actor) {
+        zmsg_t* msg = zmsg_new();
+        zmsg_pushstr(msg, group.c_str());
+        zmsg_pushstr(msg, "JOIN");
+        zmsg_send(&msg, _actor);
+    }
 }
 
 MQ2DANNET_NODE_API void Node::leave(const std::string& group) {
-    if (_node) zyre_leave(_node, group.c_str());
+    if (_actor) {
+        zmsg_t* msg = zmsg_new();
+        zmsg_pushstr(msg, group.c_str());
+        zmsg_pushstr(msg, "LEAVE");
+        zmsg_send(&msg, _actor);
+    }
 }
 
 MQ2DANNET_NODE_API void MQ2DanNet::Node::on_join(std::function<bool(const std::string&, const std::string&)> callback) {
@@ -387,7 +399,7 @@ MQ2DANNET_NODE_API void MQ2DanNet::Node::on_leave(std::function<bool(const std::
 }
 
 MQ2DANNET_NODE_API void Node::publish(const std::string& group, const std::string& cmd, std::stringstream&& args) {
-    if (!_node)
+    if (!_actor)
         return;
 
     args.seekg(0, args.end);
@@ -403,40 +415,41 @@ MQ2DANNET_NODE_API void Node::publish(const std::string& group, const std::strin
     zmsg_prepend(msg, &args_frame);
     zmsg_pushstr(msg, cmd.c_str());
 
-    zyre_shout(_node, group.c_str(), &msg);
+    zmsg_pushstr(msg, group.c_str());
+    zmsg_pushstr(msg, "SHOUT");
+
+    zmsg_send(&msg, _actor);
 
     delete[] args_buf;
 }
 
 MQ2DANNET_NODE_API void Node::respond(const std::string& name, const std::string& cmd, std::stringstream&& args) {
-    if (!_node)
+    if (!_actor)
         return;
 
-    std::string uuid = peer_uuid(name);
-    if (!uuid.empty()) {
-        std::transform(uuid.begin(), uuid.end(), uuid.begin(), ::toupper);
+    args.seekg(0, args.end);
+    size_t args_size = (size_t)args.tellg();
+    args.seekg(0, args.beg);
 
-        args.seekg(0, args.end);
-        size_t args_size = (size_t)args.tellg();
-        args.seekg(0, args.beg);
+    char *args_buf = new char[args_size];
+    args.read(args_buf, args_size);
 
-        char *args_buf = new char[args_size];
-        args.read(args_buf, args_size);
+    zframe_t *args_frame = zframe_new(args_buf, args_size);
 
-        zframe_t *args_frame = zframe_new(args_buf, args_size);
+    zmsg_t *msg = zmsg_new();
+    zmsg_prepend(msg, &args_frame);
+    zmsg_pushstr(msg, cmd.c_str());
 
-        zmsg_t *msg = zmsg_new();
-        zmsg_prepend(msg, &args_frame);
-        zmsg_pushstr(msg, cmd.c_str());
+    zmsg_pushstr(msg, name.c_str());
+    zmsg_pushstr(msg, "WHISPER");
 
-        zyre_whisper(_node, uuid.c_str(), &msg);
+    zmsg_send(&msg, _actor);
 
-        delete[] args_buf;
-    }
+    delete[] args_buf;
 }
 
 MQ2DANNET_NODE_API const std::string Node::get_info() {
-    if (!_node)
+    if (!_actor)
         return "NONET";
 
     std::stringstream output;
@@ -456,7 +469,7 @@ MQ2DANNET_NODE_API const std::string Node::get_info() {
         }
 
         for (auto peer : group.second) {
-            output << "\ax\a-w" << zyre_peer_header_value(_node, peer.c_str(), "name") << "\ax ";
+            output << "\ax\a-w" << peer << "\ax ";
         }
     }
 
@@ -466,18 +479,24 @@ MQ2DANNET_NODE_API const std::string Node::get_info() {
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peers() {
     std::set<std::string> peers;
 
-    if (_node) {
-        zlist_t* peer_ids = zyre_peers(_node);
-        if (peer_ids) {
-            const char *peer_id = reinterpret_cast<const char*>(zlist_first(peer_ids));
-            while (peer_id) {
-                peers.emplace(peer_id);
-                peer_id = reinterpret_cast<const char*>(zlist_next(peer_ids));
+    if (_actor) {
+        zstr_send(_actor, "PEERS");
+
+        zmsg_t *msg = zmsg_recv(_actor);
+        if (msg) {
+            char *peer = zmsg_popstr(msg);
+            while (peer) {
+                if (strlen(peer) > 0) peers.emplace(peer); // empty peers aren't valid, this can happen when we have no peers
+                zstr_free(&peer);
+
+                peer = zmsg_popstr(msg);
             }
 
-            zlist_destroy(&peer_ids);
+            zmsg_destroy(&msg);
         }
     }
+
+    peers.emplace(_node_name);
 
     return peers;
 }
@@ -485,21 +504,25 @@ MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peers() {
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_all_groups() {
     std::set<std::string> groups;
 
-    if (_node) {
-        zlist_t* peer_groups = zyre_peer_groups(_node);
-        if (peer_groups) {
-            const char *peer_group = reinterpret_cast<const char *>(zlist_first(peer_groups));
-            while (peer_group) {
-                groups.emplace(peer_group);
-                peer_group = reinterpret_cast<const char*>(zlist_next(peer_groups));
+    if (_actor) {
+        zstr_send(_actor, "PEER_GROUPS");
+
+        zmsg_t *msg = zmsg_recv(_actor);
+        if (msg) {
+            char *group = zmsg_popstr(msg);
+            while (group) {
+                if (strlen(group) > 0) groups.emplace(group);
+                zstr_free(&group);
+
+                group = zmsg_popstr(msg);
             }
 
-            zlist_destroy(&peer_groups);
+            zmsg_destroy(&msg);
         }
-
-        std::set<std::string> own_groups = get_own_groups();
-        groups.insert(own_groups.begin(), own_groups.end());
     }
+
+    std::set<std::string> own_groups = get_own_groups();
+    groups.insert(own_groups.begin(), own_groups.end());
 
     return groups;
 }
@@ -507,16 +530,20 @@ MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_all_groups()
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_own_groups() {
     std::set<std::string> groups;
 
-    if (_node) {
-        zlist_t* peer_groups = zyre_own_groups(_node);
-        if (peer_groups) {
-            const char *peer_group = reinterpret_cast<const char *>(zlist_first(peer_groups));
-            while (peer_group) {
-                groups.emplace(peer_group);
-                peer_group = reinterpret_cast<const char*>(zlist_next(peer_groups));
+    if (_actor) {
+        zstr_send(_actor, "OWN_GROUPS");
+
+        zmsg_t *msg = zmsg_recv(_actor);
+        if (msg) {
+            char *group = zmsg_popstr(msg);
+            while (group) {
+                if (strlen(group) > 0) groups.emplace(group);
+                zstr_free(&group);
+
+                group = zmsg_popstr(msg);
             }
 
-            zlist_destroy(&peer_groups);
+            zmsg_destroy(&msg);
         }
     }
 
@@ -526,31 +553,36 @@ MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_own_groups()
 MQ2DANNET_NODE_API const std::map<std::string, std::set<std::string>> MQ2DanNet::Node::get_group_peers() {
     std::map<std::string, std::set<std::string> > group_peers;
 
-    if (_node) {
-        std::set<std::string> groups = get_all_groups();
-        for (auto group : groups) {
-            group_peers[group] = get_group_peers(group);
-        }
+    std::set<std::string> groups = get_all_groups();
+    for (auto group : groups) {
+        group_peers[group] = get_group_peers(group);
     }
 
     return group_peers;
 }
 
-MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_group_peers(const std::string & group) {
+MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_group_peers(const std::string& group) {
     std::set<std::string> peers;
 
-    if (_node) {
-        zlist_t* z_peers = zyre_peers_by_group(_node, group.c_str());
-        if (z_peers) {
-            const char *z_peer = reinterpret_cast<const char*>(zlist_first(z_peers));
-            while (z_peer) {
-                peers.emplace(z_peer);
-                z_peer = reinterpret_cast<const char*>(zlist_next(z_peers));
+    if (_actor) {
+        zstr_sendx(_actor, "PEERS_BY_GROUP", group.c_str(), NULL);
+
+        zmsg_t *msg = zmsg_recv(_actor);
+        if (msg) {
+            char *peer = zmsg_popstr(msg);
+            while (peer) {
+                if (strlen(peer) > 0) peers.emplace(peer);
+                zstr_free(&peer);
+
+                peer = zmsg_popstr(msg);
             }
 
-            zlist_destroy(&z_peers);
+            zmsg_destroy(&msg);
         }
     }
+
+    if (is_in_group(group))
+        peers.emplace(_node_name);
 
     return peers;
 }
@@ -625,15 +657,118 @@ void Node::node_actor(zsock_t *pipe, void *args) {
             // strings index commands because zeromq has the infrastructure and it's not time-critical
             // otherwise, we'd have to deal with byte streams, which is totally unnecessary
             char *command = zmsg_popstr(msg);
-            zframe_t *body = zmsg_pop(msg);
-            char *name = zmsg_popstr(msg);
-            char *group = zmsg_popstr(msg);
 
-            DebugSpewAlways("command: %s, name: %s, group: %s", command, name, group);
+            DebugSpewAlways("MQ2DanNet: command: %s", command);
 
+            // IMPORTANT: local commands are all caps, Remote commands will be passed to this as their class name
             if (streq(command, "$TERM")) // need to handle $TERM per zactor contract
                 terminated = true;
-            else {
+            else if (streq(command, "JOIN")) {
+                char *group = zmsg_popstr(msg);
+                if (group) {
+                    zyre_join(node->_node, group);
+                    zstr_free(&group);
+                }
+            } else if (streq(command, "LEAVE")) {
+                char *group = zmsg_popstr(msg);
+                if (group) {
+                    zyre_leave(node->_node, group);
+                    zstr_free(&group);
+                }
+            } else if (streq(command, "SHOUT")) {
+                char *group = zmsg_popstr(msg);
+                if (group) {
+                    zyre_shout(node->_node, group, &msg);
+                    zstr_free(&group);
+                }
+            } else if (streq(command, "WHISPER")) {
+                char *name = zmsg_popstr(msg);
+                if (name) {
+                    std::string uuid = node->peer_uuid(name);
+                    zstr_free(&name);
+                    if (!uuid.empty())
+                        zyre_whisper(node->_node, uuid.c_str(), &msg);
+                }
+            } else if (streq(command, "PEER")) {
+                char *name = zmsg_popstr(msg);
+                std::string uuid;
+                if (name) {
+                    uuid = node->peer_uuid(name);
+                    zstr_free(&name);
+                }
+
+                zstr_send(pipe, uuid.c_str());
+            } else if (streq(command, "PEERS")) {
+                zlist_t* peer_ids = zyre_peers(node->_node);
+                zmsg_t *peers = zmsg_new();
+                if (peer_ids) {
+                    const char *peer_id = reinterpret_cast<const char*>(zlist_first(peer_ids));
+                    while (peer_id) {
+                        char *name = zyre_peer_header_value(node->_node, peer_id, "name");
+                        if (name) zmsg_pushstr(peers, name);
+                        peer_id = reinterpret_cast<const char*>(zlist_next(peer_ids));
+                    }
+
+                    zlist_destroy(&peer_ids);
+                }
+
+                if (zmsg_size(peers) == 0) zmsg_pushstr(peers, ""); // we can't have an empty message, or the client will block forever
+                zmsg_send(&peers, pipe);
+            } else if (streq(command, "PEER_GROUPS")) {
+                zlist_t* peer_groups = zyre_peer_groups(node->_node);
+                zmsg_t *groups = zmsg_new();
+                if (peer_groups) {
+                    const char *peer_group = reinterpret_cast<const char *>(zlist_first(peer_groups));
+                    while (peer_group) {
+                        zmsg_pushstr(groups, peer_group);
+                        peer_group = reinterpret_cast<const char*>(zlist_next(peer_groups));
+                    }
+
+                    zlist_destroy(&peer_groups);
+                }
+
+                if (zmsg_size(groups) == 0) zmsg_pushstr(groups, "");
+                zmsg_send(&groups, pipe);
+            } else if (streq(command, "OWN_GROUPS")) {
+                zlist_t* own_groups = zyre_own_groups(node->_node);
+                zmsg_t *groups = zmsg_new();
+                if (own_groups) {
+                    const char *peer_group = reinterpret_cast<const char *>(zlist_first(own_groups));
+                    while (peer_group) {
+                        zmsg_pushstr(groups, peer_group);
+                        peer_group = reinterpret_cast<const char*>(zlist_next(own_groups));
+                    }
+
+                    zlist_destroy(&own_groups);
+                }
+
+                if (zmsg_size(groups) == 0) zmsg_pushstr(groups, "");
+                zmsg_send(&groups, pipe);
+            } else if (streq(command, "PEERS_BY_GROUP")) {
+                char *group = zmsg_popstr(msg);
+                zmsg_t *peers = zmsg_new();
+                if (group) {
+                    zlist_t* peer_ids = zyre_peers_by_group(node->_node, group);
+                    if (peer_ids) {
+                        const char *peer_id = reinterpret_cast<const char*>(zlist_first(peer_ids));
+                        while (peer_id) {
+                            char *name = zyre_peer_header_value(node->_node, peer_id, "name");
+                            zmsg_pushstr(peers, name);
+                            peer_id = reinterpret_cast<const char*>(zlist_next(peer_ids));
+                        }
+
+                        zlist_destroy(&peer_ids);
+                    }
+                }
+
+                if (group) zstr_free(&group);
+                if (zmsg_size(peers) == 0) zmsg_pushstr(peers, "");
+                zmsg_send(&peers, pipe);
+            } else {
+                zframe_t *body = zmsg_pop(msg);
+                char *name = zmsg_popstr(msg);
+                char *group = zmsg_popstr(msg);
+
                 std::stringstream args;
                 Archive<std::stringstream> args_ar(args);
                 args_ar << std::string(name ? name : "") << std::string(group ? group : "");
@@ -643,14 +778,16 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 args.write(body_data, body_size);
 
                 node->queue_command(command, std::move(args));
+
+                if (group) zstr_free(&group);
+                if (name) zstr_free(&name);
+                if (body) zframe_destroy(&body);
+
+                zsock_signal(pipe, 0);
             }
 
-            if (group) free(group);
-            if (name) free(name);
-            if (body) zframe_destroy(&body);
-            if (command) free(command);
-
-            zmsg_destroy(&msg);
+            if (command) zstr_free(&command);
+            if (msg) zmsg_destroy(&msg);
         } else if (which == zyre_socket(node->_node)) {
             // we've received something over our socket
             //DebugSpewAlways("Got a message over the socket");
@@ -857,71 +994,19 @@ MQ2DANNET_NODE_API const Node::Observation MQ2DanNet::Node::read(const std::stri
 Node::Node() {}
 Node::~Node() {}
 
-std::string MQ2DanNet::Node::peers_arr() {
-    return peers_arr("");
-}
-
-std::string MQ2DanNet::Node::peers_arr(const std::string& group) {
-    if (_node) {
-        std::set<std::string> peers_ref = group.empty() ? get_peers() : get_group_peers(group);
-
-        std::set<std::string> peers;
-        std::transform(peers_ref.begin(), peers_ref.end(), std::inserter(peers, peers.begin()), [node(_node)](std::string peer) -> std::string {
-            return zyre_peer_header_value(node, peer.c_str(), "name");
-        });
-
-        if (group.empty() || is_in_group(group)) peers.emplace(_node_name);
-
-        return create_arr(peers);
-    }
-
-    return std::string();
-}
-
-std::string MQ2DanNet::Node::groups_arr(bool all = true) {
-    if (_node)
-        return create_arr(all ? get_all_groups() : get_own_groups());
-
-    return std::string();
-}
-
-std::string MQ2DanNet::Node::create_arr(const std::set<std::string>& members) {
-    if (!members.empty()) {
-        std::string delimiter = "|";
-        return std::accumulate(members.cbegin(), members.cend(), std::string(),
-            [delimiter](const std::string& s, const std::string& p) {
-            return s + (s.empty() ? std::string() : delimiter) + p;
-        }) + delimiter;
-    }
-
-    return std::string();
-}
-
-std::set<std::string> MQ2DanNet::Node::parse_arr(const std::string & arr) {
-    std::set<std::string> tokens;
-    std::string token;
-    std::istringstream token_stream(arr);
-    while (std::getline(token_stream, token, '|'))
-        tokens.emplace(token);
-
-    tokens.erase(""); // this is an artifact of creating the array to make it easy for macroers
-
-    return tokens;
-}
-
-Node::Observation MQ2DanNet::Node::query(const std::string& query) {
+Node::Observation MQ2DanNet::Node::query(const std::string& name, const std::string& query) {
     std::string final_query = trim_query(query);
 
-    if (final_query.empty() || final_query != _current_query) {
-        _current_query = final_query;
-        _query_result = Observation();
+    if (final_query.empty() || _current_query.find(name) == _current_query.end() || final_query != _current_query[name]) {
+        _current_query[name] = final_query;
+        _query_result[name] = Observation();
     }
 
-    return _query_result;
+    return _query_result[name];
 }
 
-void MQ2DanNet::Node::query_result(const Observation& obs) {
-    _query_result = obs;
+void MQ2DanNet::Node::query_result(const std::string& name, const Observation& obs) {
+    _query_result[name] = obs;
 }
 
 std::string MQ2DanNet::Node::trim_query(const std::string& query) {
@@ -1150,10 +1235,6 @@ std::stringstream MQ2DanNet::Query::pack(const std::string& request) {
     std::stringstream send_stream;
     Archive<std::stringstream> send(send_stream);
 
-    std::string final_request = Node::get().trim_query(request);
-
-    Node::get().query(""); // first clear -- we want a Query message to get a fresh response
-    Node::get().query(final_request); // now set our most recent request (the return won't matter here)
     auto f = [](std::stringstream&& args) -> bool {
         Archive<std::stringstream> ar(args);
         std::string from;
@@ -1166,7 +1247,7 @@ std::stringstream MQ2DanNet::Query::pack(const std::string& request) {
 
             MQ2TYPEVAR Result;
             Node::get().parse_response(type, data, Result);
-            Node::get().query_result(Node::Observation(Result, MQGetTickCount64()));
+            Node::get().query_result(from, Node::Observation(Result, MQGetTickCount64()));
 
             if (Node::get().debugging()) {
                 if (Result.Type)
@@ -1182,7 +1263,7 @@ std::stringstream MQ2DanNet::Query::pack(const std::string& request) {
     };
 
     std::string key = Node::get().register_response(f);
-    send << key << final_request;
+    send << key << request;
 
     return send_stream;
 }
@@ -1303,6 +1384,81 @@ std::stringstream MQ2DanNet::Update::pack(const std::string& query) {
 
 #pragma region MainPlugin
 
+std::string GetDefault(const std::string& val) {
+    if (val == "Debugging")
+        return std::string("off");
+    else if (val == "Local Echo")
+        return std::string("on");
+    else if (val == "Command Echo")
+        return std::string("on");
+    else if (val == "Tank")
+        return std::string("war|pal|shd|");
+    else if (val == "Priest")
+        return std::string("clr|dru|shm|");
+    else if (val == "Melee")
+        return std::string("brd|rng|mnk|rog|bst|ber|");
+    else if (val == "Caster")
+        return std::string("nec|wiz|mag|enc|");
+
+    return std::string();
+}
+
+std::string ReadVar(const std::string& section, const std::string& key) {
+    CHAR szBuf[MAX_STRING] = { 0 };
+    GetPrivateProfileString(section.c_str(), key.c_str(), GetDefault(key).c_str(), szBuf, MAX_STRING, INIFileName);
+
+    return std::string(szBuf);
+}
+
+VOID SetVar(const std::string& section, const std::string& key, const std::string& val) {
+    WritePrivateProfileString(section.c_str(), key.c_str(), val == GetDefault(val) ? NULL : val.c_str(), INIFileName);
+}
+
+BOOL ParseBool(const std::string& section, const std::string& key, const std::string& input, bool current) {
+    if (input == "on" || input == "off")
+        WriteChatf("\ax\atMQ2DanNet:\ax Turning \ao%s\ax to \ar%s\ax.", key.c_str(), input.c_str());
+    else
+        WriteChatf("\ax\atMQ2DanNet:\ax Turning \ao%s\ax to \ar%s\ax.", key.c_str(), current ? "off" : "on");
+
+    if (input == "on") {
+        SetVar(section, key, "on");
+        return true;
+    } else if (input == "off") {
+        SetVar(section, key, "off");
+        return false;
+    } else {
+        return !current;
+    }
+}
+
+BOOL ReadBool(const std::string& section, const std::string& key) {
+    return ReadVar(section, key) == "on";
+}
+
+std::string CreateArray(const std::set<std::string>& members) {
+    if (!members.empty()) {
+        std::string delimiter = "|";
+        return std::accumulate(members.cbegin(), members.cend(), std::string(),
+            [delimiter](const std::string& s, const std::string& p) {
+            return s + (s.empty() ? std::string() : delimiter) + p;
+        }) + delimiter;
+    }
+
+    return std::string();
+}
+
+std::set<std::string> ParseArray(const std::string& arr) {
+    std::set<std::string> tokens;
+    std::string token;
+    std::istringstream token_stream(arr);
+    while (std::getline(token_stream, token, '|'))
+        tokens.emplace(token);
+
+    tokens.erase(""); // this is an artifact of creating the array to make it easy for macroers
+
+    return tokens;
+}
+
 class MQ2DanNetType *pDanNetType = nullptr;
 class MQ2DanNetType : public MQ2Type {
 private:
@@ -1359,9 +1515,9 @@ public:
             return true;
         case Peers:
             if (Index[0] != '\0') {
-                strcpy_s(_buf, Node::get().peers_arr(Index).c_str());
+                strcpy_s(_buf, CreateArray(Node::get().get_group_peers(Index)).c_str());
             } else {
-                strcpy_s(_buf, Node::get().peers_arr().c_str());
+                strcpy_s(_buf, CreateArray(Node::get().get_peers()).c_str());
             }
 
             Dest.Ptr = _buf;
@@ -1370,12 +1526,12 @@ public:
         case GroupCount:
             return true;
         case Groups:
-            strcpy_s(_buf, Node::get().groups_arr().c_str());
+            strcpy_s(_buf, CreateArray(Node::get().get_all_groups()).c_str());
             Dest.Ptr = _buf;
             Dest.Type = pStringType;
             return true;
         case Joined:
-            strcpy_s(_buf, Node::get().groups_arr(false).c_str());
+            strcpy_s(_buf, CreateArray(Node::get().get_own_groups()).c_str());
             Dest.Ptr = _buf;
             Dest.Type = pStringType;
             return true;
@@ -1402,13 +1558,15 @@ public:
                     return false;
             case Q:
             case Query:
-                Dest = Node::get().query(Index ? Index : "").data;
+                Dest = Node::get().query(local_peer, Index ? Index : "").data;
                 if (Index && Index[0] != '\0' && Dest.Type == 0) {
                     strcpy_s(_buf, "NULL");
                     Dest.Ptr = _buf;
                     Dest.Type = pStringType;
 
-                    Node::get().whisper<MQ2DanNet::Query>(local_peer, Index);
+                    std::string final_request = Node::get().trim_query(Index);
+                    Node::get().query(local_peer, final_request); // now set our most recent request (the return won't matter here)
+                    Node::get().whisper<MQ2DanNet::Query>(local_peer, final_request);
                 }
                 return true;
             }
@@ -1450,57 +1608,6 @@ BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR &Dest) {
         pDanNetType->SetPeer(Node::get().get_full_name(Index));
 
     return true;
-}
-
-std::string GetDefault(const std::string& val) {
-    if (val == "Debugging")
-        return std::string("off");
-    else if (val == "Local Echo")
-        return std::string("on");
-    else if (val == "Command Echo")
-        return std::string("on");
-    else if (val == "Tank")
-        return std::string("war|pal|shd|");
-    else if (val == "Priest")
-        return std::string("clr|dru|shm|");
-    else if (val == "Melee")
-        return std::string("brd|rng|mnk|rog|bst|ber|");
-    else if (val == "Caster")
-        return std::string("nec|wiz|mag|enc|");
-
-    return std::string();
-}
-
-std::string ReadVar(const std::string& section, const std::string& key) {
-    CHAR szBuf[MAX_STRING] = { 0 };
-    GetPrivateProfileString(section.c_str(), key.c_str(), GetDefault(key).c_str(), szBuf, MAX_STRING, INIFileName);
-
-    return std::string(szBuf);
-}
-
-VOID SetVar(const std::string& section, const std::string& key, const std::string& val) {
-    WritePrivateProfileString(section.c_str(), key.c_str(), val == GetDefault(val) ? NULL : val.c_str(), INIFileName);
-}
-
-BOOL ParseBool(const std::string& section, const std::string& key, const std::string& input, bool current) {
-    if (input == "on" || input == "off")
-        WriteChatf("\ax\atMQ2DanNet:\ax Turning \ao%s\ax to \ar%s\ax.", key.c_str(), input.c_str());
-    else
-        WriteChatf("\ax\atMQ2DanNet:\ax Turning \ao%s\ax to \ar%s\ax.", key.c_str(), current ? "off" : "on");
-
-    if (input == "on") {
-        SetVar(section, key, "on");
-        return true;
-    } else if (input == "off") {
-        SetVar(section, key, "off");
-        return false;
-    } else {
-        return !current;
-    }
-}
-
-BOOL ReadBool(const std::string& section, const std::string& key) {
-    return ReadVar(section, key) == "on";
 }
 
 PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
@@ -1554,13 +1661,13 @@ PLUGIN_API VOID DJoinCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 
         GetArg(szGroup, szLine, 2);
         if (szGroup && !strcmp(szGroup, "save")) {
-            std::set<std::string> saved_groups = Node::get().parse_arr(ReadVar(Node::get().name().c_str(), "Groups"));
+            std::set<std::string> saved_groups = ParseArray(ReadVar(Node::get().name().c_str(), "Groups"));
             saved_groups.emplace(group);
-            SetVar(Node::get().name().c_str(), "Groups", Node::get().create_arr(saved_groups));
+            SetVar(Node::get().name().c_str(), "Groups", CreateArray(saved_groups));
         } else if (szGroup && !strcmp(szGroup, "all")) {
-            std::set<std::string> saved_groups = Node::get().parse_arr(ReadVar("General", "Groups"));
+            std::set<std::string> saved_groups = ParseArray(ReadVar("General", "Groups"));
             saved_groups.emplace(group);
-            SetVar("General", "Groups", Node::get().create_arr(saved_groups));
+            SetVar("General", "Groups", CreateArray(saved_groups));
         } else if (szGroup && szGroup[0] != '\0') {
             WriteChatColor("Syntax: /djoin <group> [all|save] -- join named group on peer network", USERCOLOR_DEFAULT);
         }
@@ -1580,13 +1687,13 @@ PLUGIN_API VOID DLeaveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 
         GetArg(szGroup, szLine, 2);
         if (szGroup && !strcmp(szGroup, "save")) {
-            std::set<std::string> saved_groups = Node::get().parse_arr(ReadVar(Node::get().name().c_str(), "Groups"));
+            std::set<std::string> saved_groups = ParseArray(ReadVar(Node::get().name().c_str(), "Groups"));
             saved_groups.erase(group);
-            SetVar(Node::get().name().c_str(), "Groups", Node::get().create_arr(saved_groups));
+            SetVar(Node::get().name().c_str(), "Groups", CreateArray(saved_groups));
         } else if (szGroup && !strcmp(szGroup, "all")) {
-            std::set<std::string> saved_groups = Node::get().parse_arr(ReadVar("General", "Groups"));
+            std::set<std::string> saved_groups = ParseArray(ReadVar("General", "Groups"));
             saved_groups.erase(group);
-            SetVar("General", "Groups", Node::get().create_arr(saved_groups));
+            SetVar("General", "Groups", CreateArray(saved_groups));
         } else if (szGroup && szGroup[0] != '\0') {
             WriteChatColor("Syntax: /djoin <group> [all|save] -- join named group on peer network", USERCOLOR_DEFAULT);
         }
@@ -1786,11 +1893,11 @@ PLUGIN_API VOID SetGameState(DWORD GameState) {
     if (GameState == GAMESTATE_INGAME) {
         Node::get().enter();
 
-        std::set<std::string> groups = Node::get().parse_arr(ReadVar("General", "Groups"));
+        std::set<std::string> groups = ParseArray(ReadVar("General", "Groups"));
         for (auto group : groups)
             Node::get().join(group);
 
-        groups = Node::get().parse_arr(ReadVar(Node::get().name(), "Groups"));
+        groups = ParseArray(ReadVar(Node::get().name(), "Groups"));
         for (auto group : groups)
             Node::get().join(group);
 
@@ -1800,7 +1907,7 @@ PLUGIN_API VOID SetGameState(DWORD GameState) {
             const std::string cls = Node::get().init_string(pEverQuest->GetClassThreeLetterCode(pChar->pSpawn->mActorClient.Class));
             groups.emplace(cls.c_str());
             for (auto category : { "Tank", "Priest", "Melee", "Caster" }) {
-                std::set<std::string> arr = Node::get().parse_arr(ReadVar("General", category));
+                std::set<std::string> arr = ParseArray(ReadVar("General", category));
                 if (arr.find(cls) != arr.end())
                     groups.emplace(Node::get().init_string(category));
             }
