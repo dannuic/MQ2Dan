@@ -310,6 +310,8 @@ namespace MQ2DanNet {
         std::string peers_arr();
         std::string peers_arr(const std::string& group);
         std::string groups_arr(bool all);
+        std::string create_arr(const std::set<std::string>& members);
+        std::set<std::string> parse_arr(const std::string& arr);
 
         // smartly reads/sets/clears _current_query
         Observation query(const std::string& query);
@@ -437,6 +439,10 @@ MQ2DANNET_NODE_API const std::string Node::get_info() {
     output << "CHANNELS: ";
     auto group_peers = get_group_peers();
     for (auto group : group_peers) {
+        // this is our "observer" group filter
+        if (group.first.find_first_of('_') != std::string::npos && std::isdigit(group.first.back()))
+            continue;
+
         if (groups.find(group.first) != groups.end()) {
             output << std::endl << " :: \ax\ag" << group.first << "\ax" << std::endl;
             output << "\ax\aw" << _node_name << "\ax ";
@@ -859,28 +865,41 @@ std::string MQ2DanNet::Node::peers_arr(const std::string& group) {
 
         if (group.empty() || is_in_group(group)) peers.emplace(_node_name);
 
-        std::string delimiter = "|";
-        return std::accumulate(peers.cbegin(), peers.cend(), std::string(),
-            [delimiter](const std::string& s, const std::string& p) {
-            return s + (s.empty() ? std::string() : delimiter) + p;
-        });
+        return create_arr(peers);
     }
 
     return std::string();
 }
 
 std::string MQ2DanNet::Node::groups_arr(bool all = true) {
-    if (_node) {
-        auto groups = all ? get_all_groups() : get_own_groups();
+    if (_node)
+        return create_arr(all ? get_all_groups() : get_own_groups());
 
+    return std::string();
+}
+
+std::string MQ2DanNet::Node::create_arr(const std::set<std::string>& members) {
+    if (!members.empty()) {
         std::string delimiter = "|";
-        return std::accumulate(groups.cbegin(), groups.cend(), std::string(),
+        return std::accumulate(members.cbegin(), members.cend(), std::string(),
             [delimiter](const std::string& s, const std::string& p) {
             return s + (s.empty() ? std::string() : delimiter) + p;
-        });
+        }) + delimiter;
     }
 
     return std::string();
+}
+
+std::set<std::string> MQ2DanNet::Node::parse_arr(const std::string & arr) {
+    std::set<std::string> tokens;
+    std::string token;
+    std::istringstream token_stream(arr);
+    while (std::getline(token_stream, token, '|'))
+        tokens.emplace(token);
+
+    tokens.erase(""); // this is an artifact of creating the array to make it easy for macroers
+
+    return tokens;
 }
 
 Node::Observation MQ2DanNet::Node::query(const std::string& query) {
@@ -1267,14 +1286,17 @@ std::stringstream MQ2DanNet::Update::pack(const std::string& query) {
 class MQ2DanNetType *pDanNetType = nullptr;
 class MQ2DanNetType : public MQ2Type {
 private:
-    std::string Peer;
-    CHAR Buf[MAX_STRING];
+    std::string _peer;
+    std::set<std::string> _peers;
+    std::set<std::string> _groups;
+    CHAR _buf[MAX_STRING];
 
 public:
     enum Members {
         Name,
         PeerCount,
         Peers,
+        GroupCount,
         Groups,
         Joined,
         O,
@@ -1287,6 +1309,7 @@ public:
         TypeMember(Name);
         TypeMember(PeerCount);
         TypeMember(Peers);
+        TypeMember(GroupCount);
         TypeMember(Groups);
         TypeMember(Joined);
         TypeMember(O);
@@ -1296,18 +1319,18 @@ public:
     }
 
     bool GetMember(MQ2VARPTR VarPtr, char* Member, char* Index, MQ2TYPEVAR &Dest) {
-        Buf[0] = '\0';
+        _buf[0] = '\0';
 
-        std::string local_peer = Peer;
-        Peer.clear();
+        std::string local_peer = _peer;
+        _peer.clear();
 
         PMQ2TYPEMEMBER pMember = MQ2DanNetType::FindMember(Member);
         if (!pMember) return false;
 
         switch ((Members)pMember->ID) {
         case Name:
-            strcpy_s(Buf, Node::get().name().c_str());
-            Dest.Ptr = Buf;
+            strcpy_s(_buf, Node::get().name().c_str());
+            Dest.Ptr = _buf;
             Dest.Type = pStringType;
             return true;
         case PeerCount:
@@ -1316,22 +1339,24 @@ public:
             return true;
         case Peers:
             if (Index[0] != '\0') {
-                strcpy_s(Buf, Node::get().peers_arr(Index).c_str());
+                strcpy_s(_buf, Node::get().peers_arr(Index).c_str());
             } else {
-                strcpy_s(Buf, Node::get().peers_arr().c_str());
+                strcpy_s(_buf, Node::get().peers_arr().c_str());
             }
 
-            Dest.Ptr = Buf;
+            Dest.Ptr = _buf;
             Dest.Type = pStringType;
             return true;
+        case GroupCount:
+            return true;
         case Groups:
-            strcpy_s(Buf, Node::get().groups_arr().c_str());
-            Dest.Ptr = Buf;
+            strcpy_s(_buf, Node::get().groups_arr().c_str());
+            Dest.Ptr = _buf;
             Dest.Type = pStringType;
             return true;
         case Joined:
-            strcpy_s(Buf, Node::get().groups_arr(false).c_str());
-            Dest.Ptr = Buf;
+            strcpy_s(_buf, Node::get().groups_arr(false).c_str());
+            Dest.Ptr = _buf;
             Dest.Type = pStringType;
             return true;
         }
@@ -1345,8 +1370,8 @@ public:
                     if (Dest.Type == 0) {
                         // we didn't have this observer in our map
                         // first, let's set the return
-                        strcpy_s(Buf, "NULL");
-                        Dest.Ptr = Buf;
+                        strcpy_s(_buf, "NULL");
+                        Dest.Ptr = _buf;
                         Dest.Type = pStringType;
 
                         // next, let's submit a request for the observer
@@ -1359,8 +1384,8 @@ public:
             case Query:
                 Dest = Node::get().query(Index ? Index : "").data;
                 if (Index && Index[0] != '\0' && Dest.Type == 0) {
-                    strcpy_s(Buf, "NULL");
-                    Dest.Ptr = Buf;
+                    strcpy_s(_buf, "NULL");
+                    Dest.Ptr = _buf;
                     Dest.Type = pStringType;
 
                     Node::get().whisper<MQ2DanNet::Query>(local_peer, Index);
@@ -1370,21 +1395,22 @@ public:
         }
 
         // default case, don't have a definition for member
-        strcpy_s(Buf, "NULL");
-        Dest.Ptr = Buf;
+        strcpy_s(_buf, "NULL");
+        Dest.Ptr = _buf;
         Dest.Type = pStringType;
         return false;
     }
 
     void SetPeer(const std::string& peer) {
         if (Node::get().debugging())
-            WriteChatf("MQ2DanNetType::SetPeer setting peer from %s to %s", Peer.c_str(), peer.c_str());
-        Peer = peer;
+            WriteChatf("MQ2DanNetType::SetPeer setting peer from %s to %s", _peer.c_str(), peer.c_str());
+
+        _peer = peer;
     }
 
     bool ToString(MQ2VARPTR VarPtr, char* Destination) {
-        strcpy_s(Destination, MAX_STRING, Peer.empty() ? "NULL" : Peer.c_str());
-        Peer.clear();
+        strcpy_s(Destination, MAX_STRING, _peer.empty() ? "NULL" : _peer.c_str());
+        _peer.clear();
         return true;
     }
 
@@ -1413,6 +1439,14 @@ std::string GetDefault(const std::string& val) {
         return std::string("on");
     else if (val == "Command Echo")
         return std::string("on");
+    else if (val == "Tank")
+        return std::string("war|pal|shd|");
+    else if (val == "Priest")
+        return std::string("clr|dru|shm|");
+    else if (val == "Melee")
+        return std::string("brd|rng|mnk|rog|bst|ber|");
+    else if (val == "Caster")
+        return std::string("nec|wiz|mag|enc|");
 
     return std::string();
 }
@@ -1494,9 +1528,23 @@ PLUGIN_API VOID DJoinCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     std::string group = Node::init_string(szGroup);
 
     if (group.empty())
-        WriteChatColor("Syntax: /djoin <group> -- join named group on peer network", USERCOLOR_DEFAULT);
-    else
+        WriteChatColor("Syntax: /djoin <group> [all|save] -- join named group on peer network", USERCOLOR_DEFAULT);
+    else {
         Node::get().join(group);
+
+        GetArg(szGroup, szLine, 2);
+        if (szGroup && !strcmp(szGroup, "save")) {
+            std::set<std::string> saved_groups = Node::get().parse_arr(ReadVar(Node::get().name().c_str(), "Groups"));
+            saved_groups.emplace(group);
+            SetVar(Node::get().name().c_str(), "Groups", Node::get().create_arr(saved_groups));
+        } else if (szGroup && !strcmp(szGroup, "all")) {
+            std::set<std::string> saved_groups = Node::get().parse_arr(ReadVar("General", "Groups"));
+            saved_groups.emplace(group);
+            SetVar("General", "Groups", Node::get().create_arr(saved_groups));
+        } else if (szGroup && szGroup[0] != '\0') {
+            WriteChatColor("Syntax: /djoin <group> [all|save] -- join named group on peer network", USERCOLOR_DEFAULT);
+        }
+    }
 }
 
 PLUGIN_API VOID DLeaveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
@@ -1506,9 +1554,23 @@ PLUGIN_API VOID DLeaveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     std::string group = Node::init_string(szGroup);
 
     if (group.empty())
-        WriteChatColor("Syntax: /dleave <group> -- leave named group on peer network", USERCOLOR_DEFAULT);
-    else
+        WriteChatColor("Syntax: /dleave <group> [all|save] -- leave named group on peer network", USERCOLOR_DEFAULT);
+    else {
         Node::get().leave(group);
+
+        GetArg(szGroup, szLine, 2);
+        if (szGroup && !strcmp(szGroup, "save")) {
+            std::set<std::string> saved_groups = Node::get().parse_arr(ReadVar(Node::get().name().c_str(), "Groups"));
+            saved_groups.erase(group);
+            SetVar(Node::get().name().c_str(), "Groups", Node::get().create_arr(saved_groups));
+        } else if (szGroup && !strcmp(szGroup, "all")) {
+            std::set<std::string> saved_groups = Node::get().parse_arr(ReadVar("General", "Groups"));
+            saved_groups.erase(group);
+            SetVar("General", "Groups", Node::get().create_arr(saved_groups));
+        } else if (szGroup && szGroup[0] != '\0') {
+            WriteChatColor("Syntax: /djoin <group> [all|save] -- join named group on peer network", USERCOLOR_DEFAULT);
+        }
+    }
 }
 
 PLUGIN_API VOID DTellCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
@@ -1698,8 +1760,31 @@ PLUGIN_API VOID SetGameState(DWORD GameState) {
     Node::get().exit();
 
     // TODO: What about other gamestates? There is potential for messaging there, but the naming would be off without a character
-    if (GameState == GAMESTATE_INGAME)
+    if (GameState == GAMESTATE_INGAME) {
         Node::get().enter();
+        std::set<std::string> groups = Node::get().parse_arr(ReadVar("General", "Groups"));
+        for (auto group : groups)
+            Node::get().join(group);
+
+        groups = Node::get().parse_arr(ReadVar(Node::get().name(), "Groups"));
+        for (auto group : groups)
+            Node::get().join(group);
+
+        groups = { "all" };
+        auto pChar = GetCharInfo();
+        if (pChar && pChar->pSpawn) {
+            const std::string cls = Node::get().init_string(pEverQuest->GetClassThreeLetterCode(pChar->pSpawn->mActorClient.Class));
+            groups.emplace(Node::get().init_string(cls.c_str()));
+            for (auto category : { "Tank", "Priest", "Melee", "Caster" }) {
+                std::set<std::string> arr = Node::get().parse_arr(ReadVar("General", category));
+                if (arr.find(cls) != arr.end())
+                    groups.emplace(Node::get().init_string(category));
+            }
+        }
+
+        for (auto group : groups)
+            Node::get().join(group);
+    }
 }
 
 // This is called every time MQ pulses
