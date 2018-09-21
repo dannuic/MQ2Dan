@@ -248,6 +248,7 @@ namespace MQ2DanNet {
         bool _local_echo;
         bool _command_echo;
         bool _full_names;
+        bool _front_delimiter;
 
         // explicitly prevent copy/move operations.
         Node(const Node&) = delete;
@@ -341,6 +342,9 @@ namespace MQ2DanNet {
 
         bool full_names(bool full_names) { _full_names = full_names; return _full_names; }
         bool full_names() { return _full_names; }
+
+        bool front_delimiter(bool front_delimiter) { _front_delimiter = front_delimiter; return _front_delimiter; }
+        bool front_delimiter() { return _front_delimiter; }
 
         void rejoin();
         void save_channels();
@@ -1427,6 +1431,8 @@ std::string GetDefault(const std::string& val) {
         return std::string("1s");
     else if (val == "Full Names")
         return std::string("on");
+    else if (val == "Front Delimiter")
+        return std::string("off");
 
     return std::string();
 }
@@ -1474,10 +1480,15 @@ BOOL ReadBool(const std::string& key) {
 std::string CreateArray(const std::set<std::string>& members) {
     if (!members.empty()) {
         std::string delimiter = "|";
-        return std::accumulate(members.cbegin(), members.cend(), std::string(),
+        auto accum = std::accumulate(members.cbegin(), members.cend(), std::string(),
             [delimiter](const std::string& s, const std::string& p) {
             return s + (s.empty() ? std::string() : delimiter) + p;
-        }) + delimiter;
+        });
+
+        if (Node::get().front_delimiter())
+            return delimiter + accum;
+        else
+            return accum + delimiter;
     }
 
     return std::string();
@@ -1747,6 +1758,9 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     } else if (szParam && !strcmp(szParam, "fullnames")) {
         GetArg(szParam, szLine, 2);
         Node::get().full_names(ParseBool("General", "Full Names", szParam, Node::get().full_names()));
+    } else if (szParam && !strcmp(szParam, "frontdelim")) {
+        GetArg(szParam, szLine, 2);
+        Node::get().front_delimiter(ParseBool("General", "Front Delimiter", szParam, Node::get().front_delimiter()));
     } else if (szParam && !strcmp(szParam, "timeout")) {
         GetArg(szParam, szLine, 2);
         if (szParam)
@@ -1762,6 +1776,7 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         WriteChatf("           \aylocalecho [on|off]\ax -- turn localecho on or off");
         WriteChatf("           \aycommandecho [on|off]\ax -- turn commandecho on or off");
         WriteChatf("           \ayfullnames [on|off]\ax -- turn fullnames on or off");
+        WriteChatf("           \ayfrontdelim [on|off]\ax -- turn front delimiters on or off");
         WriteChatf("           \aytimeout [new_timeout]\ax -- set the /dquery timeout");
         WriteChatf("           \ayinfo\ax -- output group/peer information");
     }
@@ -2081,6 +2096,7 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     Node::get().local_echo(ReadBool("General", "Local Echo"));
     Node::get().command_echo(ReadBool("General", "Command Echo"));
     Node::get().full_names(ReadBool("General", "Full Names"));
+    Node::get().front_delimiter(ReadBool("General", "Front Delimiter"));
 
     AddCommand("/dnet", DNetCommand);
     AddCommand("/djoin", DJoinCommand);
