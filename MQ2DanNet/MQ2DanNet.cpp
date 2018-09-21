@@ -288,6 +288,9 @@ namespace MQ2DanNet {
         std::string name() { return _node_name; }
 
         bool has_peer(const std::string& peer) {
+            if (_node_name == get_full_name(peer))
+                return true;
+
             if (_actor) {
                 zmsg_t *msg = zmsg_new();
                 zmsg_pushstr(msg, peer.c_str());
@@ -1566,16 +1569,20 @@ public:
             case O:
             case Observe:
                 if (Index && Index[0] != '\0') {
-                    Dest = Node::get().read(local_peer, Index).data;
-                    if (Dest.Type == 0) {
-                        // we didn't have this observer in our map
-                        // first, let's set the return
-                        strcpy_s(_buf, "NULL");
-                        Dest.Ptr = _buf;
-                        Dest.Type = pStringType;
+                    if (local_peer == Node::get().name()) {
+                        Node::get().parse_query(Index, Dest);
+                    } else {
+                        Dest = Node::get().read(local_peer, Index).data;
+                        if (Dest.Type == 0) {
+                            // we didn't have this observer in our map
+                            // first, let's set the return
+                            strcpy_s(_buf, "NULL");
+                            Dest.Ptr = _buf;
+                            Dest.Type = pStringType;
 
-                        // next, let's submit a request for the observer
-                        Node::get().whisper<MQ2DanNet::Observe>(local_peer, Index);
+                            // next, let's submit a request for the observer
+                            Node::get().whisper<MQ2DanNet::Observe>(local_peer, Index);
+                        }
                     }
                     return true;
                 } else
@@ -1829,6 +1836,9 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     if (name.empty() || query.empty()) {
         WriteChatColor("Syntax: /dobserve <name> <query> -- start observe query on name", USERCOLOR_DEFAULT);
         WriteChatColor("        /dobserve <name> <query> [drop] -- drop observe query on name", USERCOLOR_DEFAULT);
+    } else if (name == Node::get().name()) {
+        // observing ourself doesn't make sense
+        SyntaxError("/dobserve: cannot set an observer on self!");
     } else {
         CHAR szParam[MAX_STRING] = { 0 };
         GetArg(szParam, szLine, 3);
@@ -1871,27 +1881,63 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         }
     } while ((szParam && szParam[0] != '\0') || current_param > 10);
 
-    //CHAR szQuery[MAX_STRING] = { 0 };
-    //GetArg(szQuery, szLine, 2);
-    //std::string query(szQuery ? szQuery : "");
+    auto output_f = [](const std::string& output_var, const std::string& data) -> void {
+        // we need to pass a string data into here because we need to make sure that the output type can handle
+        // the data we give it, which is handled in `FromString`, and if we aren't in a macro we are just going
+        // to write it out anyway.
+
+        if (!output_var.empty() && gMacroBlock) { // let's make sure a macro is running here
+            CHAR szOutput[MAX_STRING] = { 0 };
+            strcpy_s(szOutput, output_var.c_str());
+            PDATAVAR pVar = FindMQ2DataVariable(szOutput);
+            if (pVar) {
+                CHAR szData[MAX_STRING] = { 0 };
+                strcpy_s(szData, data.c_str());
+                if (!pVar->Var.Type->FromString(pVar->Var.VarPtr, szData)) {
+                    MacroError("/dquery: setting '%s' failed, variable type rejected new value", szOutput);
+                }
+            } else {
+                MacroError("/dquery failed, variable '%s' not found", szOutput);
+            }
+        } else {
+            // if we aren't in a macro or we have no output, it doesn't make much sense to do anything but write it out.
+            WriteChatf("%s", data.c_str());
+        }
+    };
 
     if (name.empty() || query.empty()) {
         WriteChatColor("Syntax: /dquery <name> [-q <query>] [-o <result>] [-t <timeout>] -- execute query on name and store return in result", USERCOLOR_DEFAULT);
+    } else if (name == Node::get().name()) {
+        // this is a self-query, let's just return the evaluation of the query
+        MQ2TYPEVAR Result;
+        if (Node::get().parse_query(query, Result)) {
+            CHAR szBuf[MAX_STRING] = { 0 };
+            Result.Type->ToString(Result.VarPtr, szBuf);
+            output_f(output, szBuf);
+        } else {
+            WriteChatf("/dquery: could not parse %s", query.c_str());
+        }
     } else {
+        // reset the result so we can tell when we get a response. Needs to be done before the delay call.
+        Node::get().query_result(Node::Observation());
+
+        auto peers = Node::get().get_peers();
+        if (peers.find(name) == peers.end()) {
+            SyntaxError("/dquery: Can not find peer %s!", name.c_str());
+            return;
+        }
+
         if (timeout.empty()) timeout = ReadVar("General", "Query Timeout");
 
         // Delay and then NewVarset
         PCHARINFO pChar = GetCharInfo();
         if (pChar) {
-            // reset the result so we can tell when we get a response. Needs to be done before the delay call.
-            Node::get().query_result(Node::Observation());
-
             CHAR szDelay[MAX_STRING] = { 0 };
             strcpy_s(szDelay, (timeout + " ${DanNet.Q}").c_str());
             Delay(pChar->pSpawn, szDelay);
 
             // now we make a callback for the Query command that sets the variable
-            auto f = [pSpawn = pChar->pSpawn, output = move(output)](std::stringstream&& args) -> bool {
+            auto f = [pSpawn = pChar->pSpawn, output = move(output), output_f](std::stringstream&& args) -> bool {
                 Archive<std::stringstream> ar(args);
                 std::string from;
                 std::string group;
@@ -1903,23 +1949,7 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 
                     MQ2TYPEVAR Result;
                     Node::get().parse_response(type, data, Result);
-                    if (!output.empty() && gMacroBlock) { // let's make sure a macro is running here
-                        CHAR szOutput[MAX_STRING] = { 0 };
-                        strcpy_s(szOutput, output.c_str());
-                        PDATAVAR pVar = FindMQ2DataVariable(szOutput);
-                        if (pVar) {
-                            CHAR szData[MAX_STRING] = { 0 };
-                            strcpy_s(szData, data.c_str());
-                            if (!pVar->Var.Type->FromString(pVar->Var.VarPtr, szData)) {
-                                MacroError("/dquery: setting '%s' failed, variable type rejected new value", szOutput);
-                            }
-                        } else {
-                            MacroError("/dquery failed, variable '%s' not found", szOutput);
-                        }
-                    } else {
-                        // if we aren't in a macro or we have no output, it doesn't make much sense to do anything but write it out.
-                        WriteChatf("%s", data.c_str());
-                    }
+                    output_f(output, data);
 
                     // this actually only determines when the delay breaks. TODO: add an observation data type so we can access the result of the last query
                     Node::get().query_result(Node::Observation(Result, MQGetTickCount64()));
