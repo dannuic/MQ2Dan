@@ -239,8 +239,8 @@ namespace MQ2DanNet {
         const std::string observer_group(const unsigned int key);
         void queue_command(const std::string& command, std::stringstream&& args);
 
-        std::map<std::string, std::string> _current_query; // for the Query data member
-        std::map<std::string, Observation> _query_result;
+        std::string _current_query; // for the Query data member
+        Observation _query_result;
 
         std::set<std::string> _rejoin_groups;
 
@@ -318,11 +318,13 @@ namespace MQ2DanNet {
 
 
         // smartly reads/sets/clears _current_query
-        Observation query(const std::string& name, const std::string& query);
-        void query_result(const std::string& name, const Observation& obs);
+        Observation query(const std::string& query);
+        Observation query();
+        void query_result(const Observation& obs);
         std::string trim_query(const std::string& query);
         bool parse_query(const std::string& query, MQ2TYPEVAR& Result);
         bool parse_response(const std::string& type, const std::string& data, MQ2TYPEVAR& Result);
+        std::string peer_address(const std::string& name);
 
         bool debugging(bool debugging) { _debugging = debugging; return _debugging; }
         bool debugging() { return _debugging; }
@@ -354,7 +356,7 @@ namespace MQ2DanNet {
     COMMAND(Execute, const std::string& command);
 
     // NOTE: Query is asynchronous
-    COMMAND(Query, const std::string& request);
+    COMMAND(Query, const std::string& request, std::function<bool(std::stringstream&&)> callback);
 
     COMMAND(Observe, const std::string& query);
 
@@ -661,9 +663,10 @@ void Node::node_actor(zsock_t *pipe, void *args) {
             DebugSpewAlways("MQ2DanNet: command: %s", command);
 
             // IMPORTANT: local commands are all caps, Remote commands will be passed to this as their class name
-            if (streq(command, "$TERM")) // need to handle $TERM per zactor contract
+            if (streq(command, "$TERM")) { // need to handle $TERM per zactor contract
                 terminated = true;
-            else if (streq(command, "JOIN")) {
+                zsock_signal(pipe, 0);
+            } else if (streq(command, "JOIN")) {
                 char *group = zmsg_popstr(msg);
                 if (group) {
                     zyre_join(node->_node, group);
@@ -764,6 +767,26 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 if (group) zstr_free(&group);
                 if (zmsg_size(peers) == 0) zmsg_pushstr(peers, "");
                 zmsg_send(&peers, pipe);
+            } else if (streq(command, "PEER_ADDRESS")) {
+                char *name = zmsg_popstr(msg);
+                zmsg_t *address = zmsg_new();
+
+                std::string uuid;
+                if (name) {
+                    uuid = node->peer_uuid(name);
+                    zstr_free(&name);
+                }
+
+                if (!uuid.empty()) {
+                    char *addr = zyre_peer_address(node->_node, uuid.c_str());
+                    if (addr) {
+                        zmsg_pushstr(address, addr);
+                        zstr_free(&addr);
+                    }
+                }
+
+                if (zmsg_size(address) == 0) zmsg_pushstr(address, "");
+                zmsg_send(&address, pipe);
             } else {
                 zframe_t *body = zmsg_pop(msg);
                 char *name = zmsg_popstr(msg);
@@ -994,19 +1017,23 @@ MQ2DANNET_NODE_API const Node::Observation MQ2DanNet::Node::read(const std::stri
 Node::Node() {}
 Node::~Node() {}
 
-Node::Observation MQ2DanNet::Node::query(const std::string& name, const std::string& query) {
+Node::Observation MQ2DanNet::Node::query(const std::string& query) {
     std::string final_query = trim_query(query);
 
-    if (final_query.empty() || _current_query.find(name) == _current_query.end() || final_query != _current_query[name]) {
-        _current_query[name] = final_query;
-        _query_result[name] = Observation();
+    if (final_query.empty() || final_query != _current_query) {
+        _current_query = final_query;
+        _query_result = Observation();
     }
 
-    return _query_result[name];
+    return _query_result;
 }
 
-void MQ2DanNet::Node::query_result(const std::string& name, const Observation& obs) {
-    _query_result[name] = obs;
+Node::Observation MQ2DanNet::Node::query() {
+    return _query_result;
+}
+
+void MQ2DanNet::Node::query_result(const Observation& obs) {
+    _query_result = obs;
 }
 
 std::string MQ2DanNet::Node::trim_query(const std::string& query) {
@@ -1057,6 +1084,23 @@ bool MQ2DanNet::Node::parse_response(const std::string& type, const std::string&
         Result.Int64 = 0;
         return false;
     }
+}
+
+std::string MQ2DanNet::Node::peer_address(const std::string& name) {
+    if (_actor) {
+        zstr_sendx(_actor, "PEER_ADDRESS", name.c_str(), NULL);
+
+        char *addr = zstr_recv(_actor);
+        std::string ret;
+        if (addr) {
+            ret = addr;
+            zstr_free(&addr);
+        }
+
+        return ret;
+    }
+
+    return std::string();
 }
 
 void MQ2DanNet::Node::rejoin() {
@@ -1231,38 +1275,11 @@ const bool MQ2DanNet::Query::callback(std::stringstream&& args) {
 }
 
 // we're going to generate a new command and register it with Node here in addition to packing
-std::stringstream MQ2DanNet::Query::pack(const std::string& request) {
+std::stringstream MQ2DanNet::Query::pack(const std::string& request, std::function<bool(std::stringstream&&)> callback) {
     std::stringstream send_stream;
     Archive<std::stringstream> send(send_stream);
 
-    auto f = [](std::stringstream&& args) -> bool {
-        Archive<std::stringstream> ar(args);
-        std::string from;
-        std::string group;
-        std::string type;
-        std::string data;
-
-        try {
-            ar >> from >> group >> type >> data;
-
-            MQ2TYPEVAR Result;
-            Node::get().parse_response(type, data, Result);
-            Node::get().query_result(from, Node::Observation(Result, MQGetTickCount64()));
-
-            if (Node::get().debugging()) {
-                if (Result.Type)
-                    WriteChatf("%s : %s -- %llu (%llu)", type.c_str(), data.c_str(), Node::get().read(group).received, MQGetTickCount64());
-                else
-                    WriteChatf("%s : %s -- Failed to read data %llu.", type.c_str(), data.c_str(), MQGetTickCount64());
-            }
-        } catch (std::runtime_error&) {
-            DebugSpewAlways("MQ2DanNet::Query -- response -- Failed to deserialize.");
-        }
-
-        return true;
-    };
-
-    std::string key = Node::get().register_response(f);
+    std::string key = Node::get().register_response(callback);
     send << key << request;
 
     return send_stream;
@@ -1399,6 +1416,8 @@ std::string GetDefault(const std::string& val) {
         return std::string("brd|rng|mnk|rog|bst|ber|");
     else if (val == "Caster")
         return std::string("nec|wiz|mag|enc|");
+    else if (val == "Query Timeout")
+        return "1s";
 
     return std::string();
 }
@@ -1535,6 +1554,11 @@ public:
             Dest.Ptr = _buf;
             Dest.Type = pStringType;
             return true;
+        case Q:
+        case Query:
+            Dest.DWord = Node::get().query().received > 0;
+            Dest.Type = pBoolType;
+            return true;
         }
 
         if (!local_peer.empty()) {
@@ -1556,19 +1580,6 @@ public:
                     return true;
                 } else
                     return false;
-            case Q:
-            case Query:
-                Dest = Node::get().query(local_peer, Index ? Index : "").data;
-                if (Index && Index[0] != '\0' && Dest.Type == 0) {
-                    strcpy_s(_buf, "NULL");
-                    Dest.Ptr = _buf;
-                    Dest.Type = pStringType;
-
-                    std::string final_request = Node::get().trim_query(Index);
-                    Node::get().query(local_peer, final_request); // now set our most recent request (the return won't matter here)
-                    Node::get().whisper<MQ2DanNet::Query>(local_peer, final_request);
-                }
-                return true;
             }
         }
 
@@ -1636,6 +1647,12 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     } else if (szParam && !strcmp(szParam, "commandecho")) {
         GetArg(szParam, szLine, 2);
         Node::get().command_echo(ParseBool("General", "Command Echo", szParam, Node::get().command_echo()));
+    } else if (szParam && !strcmp(szParam, "timeout")) {
+        GetArg(szParam, szLine, 2);
+        if (szParam)
+            SetVar("General", "Query Timeout", szParam);
+        else
+            SetVar("General", "Query Timeout", GetDefault("Query Timeout"));
     } else if (szParam && !strcmp(szParam, "info")) {
         WriteChatf("%s", Node::get().get_info().c_str());
     } else {
@@ -1824,6 +1841,107 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     }
 }
 
+PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
+    CHAR szName[MAX_STRING] = { 0 };
+    CHAR szParam[MAX_STRING] = { 0 };
+    GetArg(szName, szLine, 1);
+    auto name = Node::init_string(szName);
+    if (std::string::npos == name.find_last_of("_"))
+        name = Node::get().get_full_name(name);
+
+    std::string query;
+    std::string output;
+    std::string timeout;
+
+    int current_param = 1;
+    do {
+        GetArg(szParam, szLine, ++current_param);
+        if (!strncmp(szParam, "-q", 2)) {
+            GetArg(szParam, szLine, ++current_param);
+            if (szParam) query = szParam;
+        } else if (!strncmp(szParam, "-o", 2)) {
+            GetArg(szParam, szLine, ++current_param);
+            if (szParam) output = szParam;
+        } else if (!strncmp(szParam, "-t", 2)) {
+            GetArg(szParam, szLine, ++current_param);
+            if (szParam) timeout = szParam;
+        } else if (szParam[0] == '-') {
+            // don't understand the switch, let's just fast-forward
+            ++current_param;
+        }
+    } while ((szParam && szParam[0] != '\0') || current_param > 10);
+
+    //CHAR szQuery[MAX_STRING] = { 0 };
+    //GetArg(szQuery, szLine, 2);
+    //std::string query(szQuery ? szQuery : "");
+
+    if (name.empty() || query.empty()) {
+        WriteChatColor("Syntax: /dquery <name> [-q <query>] [-o <result>] [-t <timeout>] -- execute query on name and store return in result", USERCOLOR_DEFAULT);
+    } else {
+        if (timeout.empty()) timeout = ReadVar("General", "Query Timeout");
+
+        // Delay and then NewVarset
+        PCHARINFO pChar = GetCharInfo();
+        if (pChar) {
+            // reset the result so we can tell when we get a response. Needs to be done before the delay call.
+            Node::get().query_result(Node::Observation());
+
+            CHAR szDelay[MAX_STRING] = { 0 };
+            strcpy_s(szDelay, (timeout + " ${DanNet.Q}").c_str());
+            Delay(pChar->pSpawn, szDelay);
+
+            // now we make a callback for the Query command that sets the variable
+            auto f = [pSpawn = pChar->pSpawn, output = move(output)](std::stringstream&& args) -> bool {
+                Archive<std::stringstream> ar(args);
+                std::string from;
+                std::string group;
+                std::string type;
+                std::string data;
+
+                try {
+                    ar >> from >> group >> type >> data;
+
+                    MQ2TYPEVAR Result;
+                    Node::get().parse_response(type, data, Result);
+                    if (!output.empty() && gMacroBlock) { // let's make sure a macro is running here
+                        CHAR szOutput[MAX_STRING] = { 0 };
+                        strcpy_s(szOutput, output.c_str());
+                        PDATAVAR pVar = FindMQ2DataVariable(szOutput);
+                        if (pVar) {
+                            CHAR szData[MAX_STRING] = { 0 };
+                            strcpy_s(szData, data.c_str());
+                            if (!pVar->Var.Type->FromString(pVar->Var.VarPtr, szData)) {
+                                MacroError("/dquery: setting '%s' failed, variable type rejected new value", szOutput);
+                            }
+                        } else {
+                            MacroError("/dquery failed, variable '%s' not found", szOutput);
+                        }
+                    } else {
+                        // if we aren't in a macro or we have no output, it doesn't make much sense to do anything but write it out.
+                        WriteChatf("%s", data.c_str());
+                    }
+
+                    // this actually only determines when the delay breaks. TODO: add an observation data type so we can access the result of the last query
+                    Node::get().query_result(Node::Observation(Result, MQGetTickCount64()));
+
+                    if (Node::get().debugging()) {
+                        if (Result.Type)
+                            WriteChatf("%s : %s -- %llu (%llu)", type.c_str(), data.c_str(), Node::get().read(group).received, MQGetTickCount64());
+                        else
+                            WriteChatf("%s : %s -- Failed to read data %llu.", type.c_str(), data.c_str(), MQGetTickCount64());
+                    }
+                } catch (std::runtime_error&) {
+                    DebugSpewAlways("MQ2DanNet::Query -- response -- Failed to deserialize.");
+                }
+
+                return true;
+            };
+
+            Node::get().whisper<Query>(name, query, f);
+        }
+    }
+}
+
 // Called once, when the plugin is to initialize
 PLUGIN_API VOID InitializePlugin(VOID) {
 	DebugSpewAlways("Initializing MQ2DanNet");
@@ -1847,6 +1965,7 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     AddCommand("/dgexecute", DGexecuteCommand);
     AddCommand("/dgaexecute", DGAexecuteCommand);
     AddCommand("/dobserve", DObserveCommand);
+    AddCommand("/dquery", DQueryCommand);
 
     pDanNetType = new MQ2DanNetType;
     AddMQ2Data("DanNet", dataDanNet);
@@ -1875,6 +1994,7 @@ PLUGIN_API VOID ShutdownPlugin(VOID) {
     RemoveCommand("/dgexecute");
     RemoveCommand("/dgaexecute");
     RemoveCommand("/dobserve");
+    RemoveCommand("/dquery");
 
     RemoveMQ2Data("DanNet");
     delete pDanNetType;
