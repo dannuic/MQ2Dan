@@ -1487,6 +1487,7 @@ private:
     std::string _peer;
     std::set<std::string> _peers;
     std::set<std::string> _groups;
+    std::set<std::string> _joined;
     CHAR _buf[MAX_STRING];
 
 public:
@@ -1496,6 +1497,7 @@ public:
         Peers,
         GroupCount,
         Groups,
+        JoinedCount,
         Joined,
         O,
         Observe,
@@ -1509,6 +1511,7 @@ public:
         TypeMember(Peers);
         TypeMember(GroupCount);
         TypeMember(Groups);
+        TypeMember(JoinedCount);
         TypeMember(Joined);
         TypeMember(O);
         TypeMember(Observe);
@@ -1532,11 +1535,21 @@ public:
             Dest.Type = pStringType;
             return true;
         case PeerCount:
-            Dest.DWord = Node::get().peers();
+            _peers = Node::get().get_peers();
+            Dest.DWord = _peers.size();
             Dest.Type = pIntType;
             return true;
         case Peers:
-            if (Index[0] != '\0') {
+            if (IsNumber(Index)) {
+                if (_peers.empty()) _peers = Node::get().get_peers();
+                int idx = atoi(Index) - 1;
+                auto peer_it = _peers.cbegin();
+                std::advance(peer_it, idx);
+                if (peer_it != _peers.cend())
+                    strcpy_s(_buf, peer_it->c_str());
+                else
+                    return false;
+            } else if (Index[0] != '\0') {
                 strcpy_s(_buf, CreateArray(Node::get().get_group_peers(Index)).c_str());
             } else {
                 strcpy_s(_buf, CreateArray(Node::get().get_peers()).c_str());
@@ -1546,14 +1559,44 @@ public:
             Dest.Type = pStringType;
             return true;
         case GroupCount:
+            _groups = Node::get().get_all_groups();
+            Dest.DWord = _groups.size();
+            Dest.Type = pIntType;
             return true;
         case Groups:
-            strcpy_s(_buf, CreateArray(Node::get().get_all_groups()).c_str());
+            if (IsNumber(Index)) {
+                if (_groups.empty()) _groups = Node::get().get_all_groups();
+                int idx = atoi(Index) - 1;
+                auto group_it = _groups.cbegin();
+                std::advance(group_it, idx);
+                if (group_it != _groups.cend())
+                    strcpy_s(_buf, group_it->c_str());
+                else
+                    return false;
+            } else {
+                strcpy_s(_buf, CreateArray(Node::get().get_all_groups()).c_str());
+            }
             Dest.Ptr = _buf;
             Dest.Type = pStringType;
             return true;
+        case JoinedCount:
+            _joined = Node::get().get_own_groups();
+            Dest.DWord = _groups.size();
+            Dest.Type = pIntType;
+            return true;
         case Joined:
-            strcpy_s(_buf, CreateArray(Node::get().get_own_groups()).c_str());
+            if (IsNumber(Index)) {
+                if (_joined.empty()) _joined = Node::get().get_own_groups();
+                int idx = atoi(Index) - 1;
+                auto group_it = _joined.cbegin();
+                std::advance(group_it, idx);
+                if (group_it != _joined.cend())
+                    strcpy_s(_buf, group_it->c_str());
+                else
+                    return false;
+            } else {
+                strcpy_s(_buf, CreateArray(Node::get().get_own_groups()).c_str());
+            }
             Dest.Ptr = _buf;
             Dest.Type = pStringType;
             return true;
@@ -1668,6 +1711,7 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         WriteChatf("           \aydebug [on|off]\ax -- turn debug on or off");
         WriteChatf("           \aylocalecho [on|off]\ax -- turn localecho on or off");
         WriteChatf("           \aycommandecho [on|off]\ax -- turn commandecho on or off");
+        WriteChatf("           \aytimeout [new_timeout]\ax -- set the /dquery timeout");
         WriteChatf("           \ayinfo\ax -- output group/peer information");
     }
 }
