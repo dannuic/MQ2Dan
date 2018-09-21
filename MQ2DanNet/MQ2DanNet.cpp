@@ -247,6 +247,7 @@ namespace MQ2DanNet {
         bool _debugging;
         bool _local_echo;
         bool _command_echo;
+        bool _full_names;
 
         // explicitly prevent copy/move operations.
         Node(const Node&) = delete;
@@ -337,6 +338,9 @@ namespace MQ2DanNet {
 
         bool command_echo(bool command_echo) { _command_echo = command_echo; return _command_echo; }
         bool command_echo() { return _command_echo; }
+
+        bool full_names(bool full_names) { _full_names = full_names; return _full_names; }
+        bool full_names() { return _full_names; }
 
         void rejoin();
         void save_channels();
@@ -1420,7 +1424,9 @@ std::string GetDefault(const std::string& val) {
     else if (val == "Caster")
         return std::string("nec|wiz|mag|enc|");
     else if (val == "Query Timeout")
-        return "1s";
+        return std::string("1s");
+    else if (val == "Full Names")
+        return std::string("on");
 
     return std::string();
 }
@@ -1430,6 +1436,10 @@ std::string ReadVar(const std::string& section, const std::string& key) {
     GetPrivateProfileString(section.c_str(), key.c_str(), GetDefault(key).c_str(), szBuf, MAX_STRING, INIFileName);
 
     return std::string(szBuf);
+}
+
+std::string ReadVar(const std::string& key) {
+    return ReadVar("General", key);
 }
 
 VOID SetVar(const std::string& section, const std::string& key, const std::string& val) {
@@ -1455,6 +1465,10 @@ BOOL ParseBool(const std::string& section, const std::string& key, const std::st
 
 BOOL ReadBool(const std::string& section, const std::string& key) {
     return ReadVar(section, key) == "on";
+}
+
+BOOL ReadBool(const std::string& key) {
+    return ReadBool("General", key);
 }
 
 std::string CreateArray(const std::set<std::string>& members) {
@@ -1530,7 +1544,13 @@ public:
 
         switch ((Members)pMember->ID) {
         case Name:
-            strcpy_s(_buf, Node::get().name().c_str());
+            if (!Node::get().full_names()) {
+                std::string out = Node::get().name();
+                out = out.substr(out.find_first_of("_") + 1);
+                strcpy_s(_buf, out.c_str());
+            } else {
+                strcpy_s(_buf, Node::get().name().c_str());
+            }
             Dest.Ptr = _buf;
             Dest.Type = pStringType;
             return true;
@@ -1545,14 +1565,41 @@ public:
                 int idx = atoi(Index) - 1;
                 auto peer_it = _peers.cbegin();
                 std::advance(peer_it, idx);
-                if (peer_it != _peers.cend())
-                    strcpy_s(_buf, peer_it->c_str());
-                else
+                if (peer_it != _peers.cend()) {
+                    std::string out = *peer_it;
+                    if (!Node::get().full_names() && out.find_first_of("_") != std::string::npos && out.find_first_of(EQADDR_SERVERNAME) != std::string::npos) 
+                        out = out.substr(out.find_first_of("_") + 1);
+                    strcpy_s(_buf, out.c_str());
+                }  else
                     return false;
             } else if (Index[0] != '\0') {
-                strcpy_s(_buf, CreateArray(Node::get().get_group_peers(Index)).c_str());
+                auto peers = Node::get().get_group_peers(Index);
+                std::set<std::string> out;
+                if (Node::get().full_names())
+                    out = peers;
+                else {
+                    std::transform(peers.cbegin(), peers.cend(), std::inserter(out, out.begin()), [](std::string s) -> std::string {
+                        if (s.find_first_of("_") != std::string::npos && s.find_first_of(EQADDR_SERVERNAME) != std::string::npos) {
+                            return s.substr(s.find_first_of("_") + 1);
+                        } else
+                            return s;
+                    });
+                }
+                strcpy_s(_buf, CreateArray(out).c_str());
             } else {
-                strcpy_s(_buf, CreateArray(Node::get().get_peers()).c_str());
+                auto peers = Node::get().get_peers();
+                std::set<std::string> out;
+                if (Node::get().full_names())
+                    out = peers;
+                else {
+                    std::transform(peers.cbegin(), peers.cend(), std::inserter(out, out.begin()), [](std::string s) -> std::string {
+                        if (s.find_first_of("_") != std::string::npos && s.find_first_of(EQADDR_SERVERNAME) != std::string::npos) {
+                            return s.substr(s.find_first_of("_") + 1);
+                        } else
+                            return s;
+                    });
+                }
+                strcpy_s(_buf, CreateArray(out).c_str());
             }
 
             Dest.Ptr = _buf;
@@ -1697,6 +1744,9 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     } else if (szParam && !strcmp(szParam, "commandecho")) {
         GetArg(szParam, szLine, 2);
         Node::get().command_echo(ParseBool("General", "Command Echo", szParam, Node::get().command_echo()));
+    } else if (szParam && !strcmp(szParam, "fullnames")) {
+        GetArg(szParam, szLine, 2);
+        Node::get().full_names(ParseBool("General", "Full Names", szParam, Node::get().full_names()));
     } else if (szParam && !strcmp(szParam, "timeout")) {
         GetArg(szParam, szLine, 2);
         if (szParam)
@@ -1711,6 +1761,7 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         WriteChatf("           \aydebug [on|off]\ax -- turn debug on or off");
         WriteChatf("           \aylocalecho [on|off]\ax -- turn localecho on or off");
         WriteChatf("           \aycommandecho [on|off]\ax -- turn commandecho on or off");
+        WriteChatf("           \ayfullnames [on|off]\ax -- turn fullnames on or off");
         WriteChatf("           \aytimeout [new_timeout]\ax -- set the /dquery timeout");
         WriteChatf("           \ayinfo\ax -- output group/peer information");
     }
@@ -2029,6 +2080,7 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     Node::get().debugging(ReadBool("General", "Debugging"));
     Node::get().local_echo(ReadBool("General", "Local Echo"));
     Node::get().command_echo(ReadBool("General", "Command Echo"));
+    Node::get().full_names(ReadBool("General", "Full Names"));
 
     AddCommand("/dnet", DNetCommand);
     AddCommand("/djoin", DJoinCommand);
