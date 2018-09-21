@@ -730,7 +730,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                     zlist_destroy(&peer_ids);
                 }
 
-                if (zmsg_size(peers) == 0) zmsg_pushstr(peers, ""); // we can't have an empty message, or the client will block forever
+                if (zmsg_size(peers) == 0) zmsg_pushstr(peers, "0");
                 zmsg_send(&peers, pipe);
             } else if (streq(command, "PEER_GROUPS")) {
                 zlist_t* peer_groups = zyre_peer_groups(node->_node);
@@ -820,8 +820,6 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 if (group) zstr_free(&group);
                 if (name) zstr_free(&name);
                 if (body) zframe_destroy(&body);
-
-                zsock_signal(pipe, 0);
             }
 
             if (command) zstr_free(&command);
@@ -911,7 +909,20 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 // also, turns out this is done a lot so let's just mute it to reduce spam
                 //TODO: need to maintain a keepalive list so we can remove peers that have disconnected (how to force remove peers? it might be a command to the actor, look this up.)
                 //auto tick = MQGetTickCount64();
-                //DebugSpewAlways("%s is being evasive at %ull.", name.c_str(), tick);
+                //zlist_t *peer_ids = zyre_peers(node->_node);
+                //if (peer_ids) {
+                //    const char *peer_id = reinterpret_cast<const char*>(zlist_first(peer_ids));
+                //    while (peer_id) {
+                //        char *peer = zyre_peer_header_value(node->_node, peer_id, "name");
+                //        if (peer)
+                //            DebugSpewAlways("PEER: %s", peer);
+                //        peer_id = reinterpret_cast<const char*>(zlist_next(peer_ids));
+                //    }
+
+                //    zlist_destroy(&peer_ids);
+                //}
+
+                //DebugSpewAlways("%s is being evasive at %ull", name.c_str(), tick);
             } else {
                 DebugSpewAlways("MQ2DanNet: Got unhandled event type %s.", event_type.c_str());
             }
@@ -2046,7 +2057,7 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 
         auto peers = Node::get().get_peers();
         if (peers.find(name) == peers.end()) {
-            SyntaxError("/dquery: Can not find peer %s!", name.c_str());
+            DebugSpewAlways("/dquery: Can not find peer %s in %s!", name.c_str(), CreateArray(peers).c_str());
             return;
         }
 
