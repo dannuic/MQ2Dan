@@ -146,7 +146,7 @@ namespace MQ2DanNet {
         void publish(Args&&... args) {
             for (auto observer_it = _observer_map.begin(); observer_it != _observer_map.end(); ++ observer_it) {
                 auto tick = MQGetTickCount64();
-                if (tick - observer_it->second.last >= std::max<unsigned __int64>(10 * observer_it->second.benchmark, 1000)) { // wait at least a second between updates
+                if (tick - observer_it->second.last >= std::max<unsigned __int64>(10 * observer_it->second.benchmark, observe_delay())) { // wait at least a second between updates
                     std::string group = observer_group(observer_it->first);
                     auto group_peers = get_group_peers();
                     auto group_it = group_peers.cbegin();
@@ -249,6 +249,7 @@ namespace MQ2DanNet {
         bool _command_echo;
         bool _full_names;
         bool _front_delimiter;
+        unsigned int _observe_delay;
 
         // explicitly prevent copy/move operations.
         Node(const Node&) = delete;
@@ -345,6 +346,9 @@ namespace MQ2DanNet {
 
         bool front_delimiter(bool front_delimiter) { _front_delimiter = front_delimiter; return _front_delimiter; }
         bool front_delimiter() { return _front_delimiter; }
+
+        unsigned int observe_delay(unsigned int observe_delay) { _observe_delay = observe_delay; return _observe_delay; }
+        unsigned int observe_delay() { return _observe_delay; }
 
         void rejoin();
         void save_channels();
@@ -1433,6 +1437,8 @@ std::string GetDefault(const std::string& val) {
         return std::string("on");
     else if (val == "Front Delimiter")
         return std::string("off");
+    else if (val == "Observe Delay")
+        return std::string("1000");
 
     return std::string();
 }
@@ -1767,6 +1773,12 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             SetVar("General", "Query Timeout", szParam);
         else
             SetVar("General", "Query Timeout", GetDefault("Query Timeout"));
+    } else if (szParam && !strcmp(szParam, "observedelay")) {
+        GetArg(szParam, szLine, 2);
+        if (szParam && IsNumber(szParam))
+            SetVar("General", "Observe Delay", szParam);
+        else
+            SetVar("General", "Observe Delay", GetDefault("Observe Delay"));
     } else if (szParam && !strcmp(szParam, "info")) {
         WriteChatf("%s", Node::get().get_info().c_str());
     } else {
@@ -1778,6 +1790,7 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         WriteChatf("           \ayfullnames [on|off]\ax -- turn fullnames on or off");
         WriteChatf("           \ayfrontdelim [on|off]\ax -- turn front delimiters on or off");
         WriteChatf("           \aytimeout [new_timeout]\ax -- set the /dquery timeout");
+        WriteChatf("           \ayobservedelay [new_delay]\ax -- set the delay between observe sends");
         WriteChatf("           \ayinfo\ax -- output group/peer information");
     }
 }
@@ -2097,6 +2110,14 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     Node::get().command_echo(ReadBool("General", "Command Echo"));
     Node::get().full_names(ReadBool("General", "Full Names"));
     Node::get().front_delimiter(ReadBool("General", "Front Delimiter"));
+
+    CHAR observe_delay[MAX_STRING] = { 0 };
+    strcpy_s(observe_delay, ReadVar("Observe Delay").c_str());
+    if (IsNumber(observe_delay)) {
+        Node::get().observe_delay(atoi(observe_delay));
+    } else {
+        Node::get().observe_delay(atoi(GetDefault("Observe Delay").c_str()));
+    }
 
     AddCommand("/dnet", DNetCommand);
     AddCommand("/djoin", DJoinCommand);
