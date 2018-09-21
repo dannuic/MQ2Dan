@@ -20,11 +20,12 @@ There are 2 basic uses
   * Reading an observer's data: `${DanNet[<name>].Observe[<query>]}` or `${DanNet[<name>].O[<query>]}`
   * Dropping an observer: `/dobserve <name> <query> drop`
 2. Single-use direct query
-  * Submitting a query: `${DanNet[<name>].Query[<query>]` or `${DanNet[<name>].Q[<query>]`
-    * The result of that will initially be NULL (a string)
-      * requires some form of waiting for a response
-      * subsequent requests with the same query will attempt to read response
-
+  * Submitting a query: `/dquery <name> [-q <query>] [-o <result>] [-t <timeout>]`
+    * Combines `/delay` with `/varset`
+    * `timeout` is optional, and the default can be configured
+    * `result` is optional, will just write out the result if omitted
+    * If not run in a macro, ignores `result` and just writes out
+    
 
 ### Queries
 A query is simply a normal TLO access from the perspective of the peer with the external `${}` stripped
@@ -51,3 +52,4 @@ I have added some simple echo commands in addition to `/dinfo` and `/dobserve`, 
 * `/dgexecute <group> <command>` -- executes a command on all clients in a group (except own)
 * `/dgaexecute <group> <command>` -- executes a command on all clients in a group (including own)
 * `/dnet [<arg>]` -- sets some variables, gives info, check  in-game output for use
+* `/dquery <name> [-q <query>] [-o <result>] [-t <timeout>]` -- execute query on name and store return in result
