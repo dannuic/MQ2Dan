@@ -480,13 +480,21 @@ MQ2DANNET_NODE_API const std::string Node::get_info() {
 
         if (groups.find(group.first) != groups.end()) {
             output << std::endl << " :: \ax\ag" << group.first << "\ax" << std::endl;
-            output << "\ax\aw" << _node_name << "\ax ";
         } else {
             output << std::endl << " :: \ax\a-g" << group.first << "\ax" << std::endl;
         }
 
         for (auto peer : group.second) {
-            output << "\ax\a-w" << peer << "\ax ";
+            if (_node_name == peer)
+                output << "\ax\aw";
+            else
+                output << "\ax\a-w";
+
+            std::string peer_out = peer;
+            if (!full_names() && peer_out.find_first_of("_") != std::string::npos && peer_out.find_first_of(EQADDR_SERVERNAME) != std::string::npos)
+                peer_out = peer_out.substr(peer_out.find_first_of("_") + 1);
+
+            output << peer_out << "\ax ";
         }
     }
 
