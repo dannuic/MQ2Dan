@@ -939,6 +939,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
         }
     }
 
+    zsock_signal(pipe, 0);
     zpoller_destroy(&poller);
 
     auto groups = node->get_own_groups();
@@ -1091,6 +1092,7 @@ std::string MQ2DanNet::Node::trim_query(const std::string& query) {
 bool MQ2DanNet::Node::parse_query(const std::string& query, MQ2TYPEVAR& Result) {
     CHAR szQuery[MAX_STRING];
     strcpy_s(szQuery, query.c_str());
+    //strcat_s(szQuery, "${}");
     Result.Type = 0;
     Result.Int64 = 0;
 
@@ -1099,10 +1101,21 @@ bool MQ2DanNet::Node::parse_query(const std::string& query, MQ2TYPEVAR& Result) 
 
     // Then after all of that, we need to Evaluate the entire thing as a single variable
     // Can retrieve this data with `FindMQ2DataType(Result.Type->GetName());` and then `Result.Type->FromString(Result.VarPtr, szBuf);`
-    return ParseMQ2DataPortion(szQuery, Result) && Result.Type;
+    //ParseMQ2DataPortion(szQuery, Result);
+    ZeroMemory(&Result, sizeof(Result));
+    Result.Type = 0;
+    Result.Int64 = 0;
+    if (!ParseMQ2DataPortion(szQuery, Result) || !Result.Type) {
+        ZeroMemory(&Result, sizeof(Result));
+        Result.Type = 0;
+        Result.Int64 = 0;
+    }
+
+    return Result.Type;
 }
 
 bool MQ2DanNet::Node::parse_response(const std::string& type, const std::string& data, MQ2TYPEVAR& Result) {
+    ZeroMemory(&Result, sizeof(Result));
     Result.Type = 0;
     Result.Int64 = 0;
 
@@ -1111,13 +1124,13 @@ bool MQ2DanNet::Node::parse_response(const std::string& type, const std::string&
     Result.Type = FindMQ2DataType(szBuf);
 
     strcpy_s(szBuf, data.c_str());
-    if (Result.Type && Result.Type->FromString(Result.VarPtr, szBuf)) {
-        return true;
-    } else {
+    if (!Result.Type || !Result.Type->FromString(Result.VarPtr, szBuf)) {
+        ZeroMemory(&Result, sizeof(Result));
         Result.Type = 0;
         Result.Int64 = 0;
-        return false;
     }
+
+    return Result.Type;
 }
 
 std::string MQ2DanNet::Node::peer_address(const std::string& name) {
@@ -1289,14 +1302,14 @@ const bool MQ2DanNet::Query::callback(std::stringstream&& args) {
         if (Node::get().parse_query(request, Result)) {
             CHAR szBuf[MAX_STRING] = { 0 };
             strcpy_s(szBuf, Result.Type->GetName());
-            if (!szBuf) strcpy_s(szBuf, "NULL");
+            if (!szBuf) strcpy_s(szBuf, "");
             send << szBuf;
 
             Result.Type->ToString(Result.VarPtr, szBuf);
-            if (!szBuf) strcpy_s(szBuf, "NULL");
+            if (!szBuf) strcpy_s(szBuf, "");
             send << szBuf;
         } else {
-            send << "NULL" << "NULL";
+            send << "" << "";
         }
 
         Node::get().respond(from, key, std::move(send_stream));
@@ -1334,14 +1347,9 @@ const bool MQ2DanNet::Observe::callback(std::stringstream&& args) {
         std::stringstream args;
         Archive<std::stringstream> ar(args);
 
-        // only install the observer if it is a valid query
-        MQ2TYPEVAR Result;
-        if (Node::get().parse_query(query, Result)) {
-            std::string return_group = Node::get().register_observer(from.c_str(), query.c_str());
-            ar << return_group;
-        } else {
-            ar << "NULL";
-        }
+        // This can install invalid queries, which is by design. We have no way to determine when some queries are valid or invalid
+        std::string return_group = Node::get().register_observer(from.c_str(), query.c_str());
+        ar << return_group;
 
         Node::get().respond(from, key, std::move(args));
     } catch (std::runtime_error&) {
@@ -1366,7 +1374,7 @@ std::stringstream MQ2DanNet::Observe::pack(const std::string& query) {
 
         try {
             ar >> from >> group >> new_group;
-            if (new_group != "NULL") {
+            if (!new_group.empty()) {
                 Node::get().observe(new_group, from, final_query);
             }
         } catch (std::runtime_error&) {
@@ -1418,14 +1426,14 @@ std::stringstream MQ2DanNet::Update::pack(const std::string& query) {
     if (Node::get().parse_query(query, Result)) {
         CHAR szBuf[MAX_STRING] = { 0 };
         strcpy_s(szBuf, Result.Type->GetName());
-        if (!szBuf) strcpy_s(szBuf, "NULL");
+        if (!szBuf) strcpy_s(szBuf, "");
         send << szBuf;
 
         Result.Type->ToString(Result.VarPtr, szBuf);
-        if (!szBuf) strcpy_s(szBuf, "NULL");
+        if (!szBuf) strcpy_s(szBuf, "");
         send << szBuf;
     } else {
-        send << "NULL" << "NULL";
+        send << "" << "";
     }
 
     return send_stream;
@@ -1696,30 +1704,24 @@ public:
             case Observe:
                 if (Index && Index[0] != '\0') {
                     if (local_peer == Node::get().name()) {
+                        // we're looking at ourself, so let's just run the query like normal
                         Node::get().parse_query(Index, Dest);
                     } else {
                         Dest = Node::get().read(local_peer, Index).data;
-                        if (Dest.Type == 0) {
-                            // we didn't have this observer in our map
-                            // first, let's set the return
-                            strcpy_s(_buf, "NULL");
-                            Dest.Ptr = _buf;
-                            Dest.Type = pStringType;
-
-                            // next, let's submit a request for the observer
+                        if (Dest.Type == 0)
+                            // we didn't have this observer in our map, let's submit a request for the observer
                             Node::get().whisper<MQ2DanNet::Observe>(local_peer, Index);
-                        }
                     }
+
+                    // we failed to get the type for some reason or another, let the upstream handler parse the failure
+                    if (Dest.Type == 0)
+                        return false;
                     return true;
                 } else
                     return false;
             }
         }
 
-        // default case, don't have a definition for member
-        strcpy_s(_buf, "NULL");
-        Dest.Ptr = _buf;
-        Dest.Type = pStringType;
         return false;
     }
 
@@ -2043,7 +2045,7 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             }
         } else {
             // if we aren't in a macro or we have no output, it doesn't make much sense to do anything but write it out.
-            WriteChatf("%s", data.c_str());
+            WriteChatf("%s", data.size() > 0 ? data.c_str() : "NULL");
         }
     };
 
@@ -2052,13 +2054,14 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     } else if (name == Node::get().name()) {
         // this is a self-query, let's just return the evaluation of the query
         MQ2TYPEVAR Result;
+        CHAR szBuf[MAX_STRING] = { 0 };
         if (Node::get().parse_query(query, Result)) {
-            CHAR szBuf[MAX_STRING] = { 0 };
+            // We know that `Result.Type` is non-null because of the result of `parse_query`
             Result.Type->ToString(Result.VarPtr, szBuf);
-            output_f(output, szBuf);
-        } else {
-            WriteChatf("/dquery: could not parse %s", query.c_str());
         }
+
+        // we need to call this no matter what
+        output_f(output, szBuf);
     } else {
         // reset the result so we can tell when we get a response. Needs to be done before the delay call.
         Node::get().query_result(Node::Observation());
