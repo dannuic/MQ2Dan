@@ -350,7 +350,6 @@ namespace MQ2DanNet {
         unsigned int observe_delay(unsigned int observe_delay) { _observe_delay = observe_delay; return _observe_delay; }
         unsigned int observe_delay() { return _observe_delay; }
 
-        void rejoin();
         void save_channels();
 
         void enter();
@@ -660,7 +659,12 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     auto my_sock = zyre_socket(node->_node);
     zpoller_t *poller = zpoller_new(pipe, my_sock, (void*)NULL);
 
-    node->rejoin();
+    std::set<std::string> groups = node->_rejoin_groups;
+    node->_rejoin_groups.clear();
+
+    for (auto group : groups) {
+        zyre_join(node->_node, group.c_str());
+    }
 
     // TODO: This doesn't appear necessary, but experiment with it
     //zpoller_set_nonstop(poller, true);
@@ -688,7 +692,6 @@ void Node::node_actor(zsock_t *pipe, void *args) {
             // IMPORTANT: local commands are all caps, Remote commands will be passed to this as their class name
             if (streq(command, "$TERM")) { // need to handle $TERM per zactor contract
                 terminated = true;
-                zsock_signal(pipe, 0);
             } else if (streq(command, "JOIN")) {
                 char *group = zmsg_popstr(msg);
                 if (group) {
@@ -939,16 +942,24 @@ void Node::node_actor(zsock_t *pipe, void *args) {
         }
     }
 
-    zsock_signal(pipe, 0);
     zpoller_destroy(&poller);
 
-    auto groups = node->get_own_groups();
-    for (auto group : groups)
-        node->leave(group);
+    zlist_t* own_groups = zyre_own_groups(node->_node);
+    if (own_groups) {
+        const char *peer_group = reinterpret_cast<const char *>(zlist_first(own_groups));
+        while (peer_group) {
+            zyre_leave(node->_node, peer_group);
+            peer_group = reinterpret_cast<const char*>(zlist_next(own_groups));
+        }
+
+        zlist_destroy(&own_groups);
+    }
 
     zyre_stop(node->_node);
     zclock_sleep(100);
     zyre_destroy(&node->_node);
+    zsock_signal(pipe, 0);
+    zsock_signal(pipe, 0);
 }
 
 std::string Node::init_string(const char *szStr) {
@@ -1148,14 +1159,6 @@ std::string MQ2DanNet::Node::peer_address(const std::string& name) {
     }
 
     return std::string();
-}
-
-void MQ2DanNet::Node::rejoin() {
-    std::set<std::string> groups = _rejoin_groups;
-    _rejoin_groups.clear();
-
-    for (auto group : groups)
-        join(group);
 }
 
 void MQ2DanNet::Node::save_channels() {
