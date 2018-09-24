@@ -64,7 +64,8 @@ I have added some simple echo commands in addition to `/dinfo` and `/dobserve`, 
 * `FullNames` -- print fully qualified names?
 * `FrontDelim` -- use a front | in arrays?
 * `Timeout` -- timeout for implicit delay in `/dquery` and `/dobserve` commands
-* `ObserveDelay` -- delay between observe broadcasts
+* `ObserveDelay` -- delay between observe broadcasts (in ms)
+* `Keepalive` -- keepalive time for non-responding peers (in ms)
 * `PeerCount` -- number of connected peers
 * `Peers` -- list of connected peers
 * `GroupCount` -- number of all groups

@@ -251,6 +251,7 @@ namespace MQ2DanNet {
         bool _full_names;
         bool _front_delimiter;
         unsigned int _observe_delay;
+        unsigned int _keepalive;
 
         // explicitly prevent copy/move operations.
         Node(const Node&) = delete;
@@ -349,6 +350,9 @@ namespace MQ2DanNet {
 
         unsigned int observe_delay(unsigned int observe_delay) { _observe_delay = observe_delay; return _observe_delay; }
         unsigned int observe_delay() { return _observe_delay; }
+
+        unsigned int keepalive(unsigned int keepalive) { _keepalive = keepalive; if (_actor) zstr_sendx(_actor, "KEEPALIVE", std::to_string(keepalive).c_str(), NULL); return _keepalive; }
+        unsigned int keepalive() { return _keepalive; }
 
         void save_channels();
 
@@ -653,6 +657,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     // send our node name for easier name recognition
     zyre_set_header(node->_node, "name", "%s", node->_node_name.c_str());
     zyre_start(node->_node);
+    zyre_set_expired_timeout(node->_node, node->keepalive());
 
     zsock_signal(pipe, 0); // ready signal, required by zactor contract
     
@@ -813,6 +818,17 @@ void Node::node_actor(zsock_t *pipe, void *args) {
 
                 if (zmsg_size(address) == 0) zmsg_pushstr(address, "");
                 zmsg_send(&address, pipe);
+            } else if (streq(command, "KEEPALIVE")) {
+                char *szKeepalive = zmsg_popstr(msg);
+                if (IsNumber(szKeepalive)) {
+                    zyre_set_expired_timeout(node->_node, atoi(szKeepalive));
+                } else if (szKeepalive) {
+                    DebugSpewAlways("KEEPALIVE: Trying to set non-numeric %s.", szKeepalive);
+                } else {
+                    DebugSpewAlways("KEEPALIVE: Trying to set null.");
+                }
+
+                if (szKeepalive) zstr_free(&szKeepalive);
             } else {
                 zframe_t *body = zmsg_pop(msg);
                 char *name = zmsg_popstr(msg);
@@ -1544,6 +1560,8 @@ std::string GetDefault(const std::string& val) {
         return std::string("off");
     else if (val == "Observe Delay")
         return std::string("1000");
+    else if (val == "Keepalive")
+        return std::string("30000");
 
     return std::string();
 }
@@ -1688,6 +1706,7 @@ public:
         FrontDelim,
         Timeout,
         ObserveDelay,
+        Keepalive,
         PeerCount,
         Peers,
         GroupCount,
@@ -1710,6 +1729,7 @@ public:
         TypeMember(FrontDelim);
         TypeMember(Timeout);
         TypeMember(ObserveDelay);
+        TypeMember(Keepalive);
         TypeMember(PeerCount);
         TypeMember(Peers);
         TypeMember(GroupCount);
@@ -1774,6 +1794,10 @@ public:
             return true;
         case ObserveDelay:
             Dest.DWord = Node::get().observe_delay();
+            Dest.Type = pIntType;
+            return true;
+        case Keepalive:
+            Dest.DWord = Node::get().keepalive();
             Dest.Type = pIntType;
             return true;
         case PeerCount:
@@ -1970,6 +1994,14 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             SetVar("General", "Observe Delay", szParam);
         else
             SetVar("General", "Observe Delay", GetDefault("Observe Delay"));
+        Node::get().observe_delay(atoi(ReadVar("Observe Delay").c_str()));
+    } else if (szParam && !strcmp(szParam, "keepalive")) {
+        GetArg(szParam, szLine, 2);
+        if (szParam && IsNumber(szParam))
+            SetVar("General", "Keepalive", szParam);
+        else
+            SetVar("General", "Keepalive", GetDefault("Keepalive"));
+        Node::get().keepalive(atoi(ReadVar("Keepalive").c_str()));
     } else if (szParam && !strcmp(szParam, "info")) {
         WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%f\ax", MQ2Version);
         WriteChatf("%s", Node::get().get_info().c_str());
@@ -1982,7 +2014,8 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         WriteChatf("           \ayfullnames [on|off]\ax -- turn fullnames on or off");
         WriteChatf("           \ayfrontdelim [on|off]\ax -- turn front delimiters on or off");
         WriteChatf("           \aytimeout [new_timeout]\ax -- set the /dquery timeout");
-        WriteChatf("           \ayobservedelay [new_delay]\ax -- set the delay between observe sends");
+        WriteChatf("           \ayobservedelay [new_delay]\ax -- set the delay between observe sends in ms");
+        WriteChatf("           \aykeepalive [new_keepalive]\ax -- set the keepalive time for non-responding peers in ms");
         WriteChatf("           \ayinfo\ax -- output group/peer information");
     }
 }
@@ -2282,6 +2315,14 @@ PLUGIN_API VOID InitializePlugin(VOID) {
         Node::get().observe_delay(atoi(observe_delay));
     } else {
         Node::get().observe_delay(atoi(GetDefault("Observe Delay").c_str()));
+    }
+
+    CHAR keepalive[MAX_STRING] = { 0 };
+    strcpy_s(keepalive, ReadVar("Keepalive").c_str());
+    if (IsNumber(keepalive)) {
+        Node::get().keepalive(atoi(keepalive));
+    } else {
+        Node::get().keepalive(atoi(GetDefault("Keepalive").c_str()));
     }
 
     AddCommand("/dnet", DNetCommand);
