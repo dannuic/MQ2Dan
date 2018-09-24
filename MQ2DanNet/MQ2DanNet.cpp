@@ -1,7 +1,8 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
- * dannuic: version 0.02 -- Added parseable outputs and tracked peers/groups from underlying tech
- * dannuic: version 0.01 -- initial version, can set observers and perform queries, see README.md for more information
+ * dannuig: version 0.3 -- revamped dquery, dobserve, and all TLO's
+ * dannuic: version 0.2 -- Added parseable outputs and tracked peers/groups from underlying tech
+ * dannuic: version 0.1 -- initial version, can set observers and perform queries, see README.md for more information
  */
 // MQ2DanNet.cpp : Defines the entry point for the DLL application.
 //
@@ -36,7 +37,7 @@
 #include <set>
 #include <string>
 
-PLUGIN_VERSION(0.02);
+PLUGIN_VERSION(0.3);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -1563,16 +1564,23 @@ VOID SetVar(const std::string& section, const std::string& key, const std::strin
 }
 
 BOOL ParseBool(const std::string& section, const std::string& key, const std::string& input, bool current) {
-    if (input == "on" || input == "off")
+    std::string final_input = Node::init_string(input.c_str());
+    if (final_input == "on" || final_input == "off")
         WriteChatf("\ax\atMQ2DanNet:\ax Turning \ao%s\ax to \ar%s\ax.", key.c_str(), input.c_str());
     else
         WriteChatf("\ax\atMQ2DanNet:\ax Turning \ao%s\ax to \ar%s\ax.", key.c_str(), current ? "off" : "on");
 
-    if (input == "on") {
+    if (final_input == "on") {
         SetVar(section, key, "on");
         return true;
-    } else if (input == "off") {
+    } else if (final_input == "off") {
         SetVar(section, key, "off");
+        return false;
+    } else if (final_input == "true") {
+        SetVar(section, key, "true");
+        return true;
+    } else if (final_input == "false") {
+        SetVar(section, key, "false");
         return false;
     } else {
         return !current;
@@ -1580,7 +1588,7 @@ BOOL ParseBool(const std::string& section, const std::string& key, const std::st
 }
 
 BOOL ReadBool(const std::string& section, const std::string& key) {
-    return ReadVar(section, key) == "on";
+    return Node::init_string(ReadVar(section, key).c_str()) == "on" || Node::init_string(ReadVar(section, key).c_str()) == "true";
 }
 
 BOOL ReadBool(const std::string& key) {
@@ -1672,6 +1680,7 @@ private:
 public:
     enum Members {
         Name,
+        Version,
         Debug,
         LocalEcho,
         CommandEcho,
@@ -1693,6 +1702,7 @@ public:
 
     MQ2DanNetType() : MQ2Type("DanNet") {
         TypeMember(Name);
+        TypeMember(Version);
         TypeMember(Debug);
         TypeMember(LocalEcho);
         TypeMember(CommandEcho);
@@ -1732,6 +1742,10 @@ public:
             }
             Dest.Ptr = _buf;
             Dest.Type = pStringType;
+            return true;
+        case Version:
+            Dest.Float = MQ2Version;
+            Dest.Type = pFloatType;
             return true;
         case Debug:
             Dest.DWord = Node::get().debugging();
@@ -1957,6 +1971,7 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         else
             SetVar("General", "Observe Delay", GetDefault("Observe Delay"));
     } else if (szParam && !strcmp(szParam, "info")) {
+        WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%f\ax", MQ2Version);
         WriteChatf("%s", Node::get().get_info().c_str());
     } else {
         WriteChatf("\ax\atMQ2DanNet:\ax unrecognized /dnet argument \ar%s\ax. Valid arguments are: ", szParam);
@@ -2284,6 +2299,8 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     AddMQ2Data("DanNet", dataDanNet);
 
     pDanObservationType = new MQ2DanObservationType;
+
+    WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%f\ax", MQ2Version);
 }
 
 // Called once, when the plugin is to shutdown
