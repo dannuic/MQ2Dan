@@ -1143,7 +1143,8 @@ MQ2TYPEVAR MQ2DanNet::Node::parse_response(const std::string& output, const std:
         strcpy_s(DataTypeTemp, data.c_str());
         Result.Ptr = &DataTypeTemp[0];
         Result.Type = pStringType;
-        WriteChatf("%s", data.c_str());
+        if (debugging())
+            WriteChatf("%s", data.c_str());
 
         return Result;
     }
@@ -1671,6 +1672,13 @@ private:
 public:
     enum Members {
         Name,
+        Debug,
+        LocalEcho,
+        CommandEcho,
+        FullNames,
+        FrontDelim,
+        Timeout,
+        ObserveDelay,
         PeerCount,
         Peers,
         GroupCount,
@@ -1685,6 +1693,13 @@ public:
 
     MQ2DanNetType() : MQ2Type("DanNet") {
         TypeMember(Name);
+        TypeMember(Debug);
+        TypeMember(LocalEcho);
+        TypeMember(CommandEcho);
+        TypeMember(FullNames);
+        TypeMember(FrontDelim);
+        TypeMember(Timeout);
+        TypeMember(ObserveDelay);
         TypeMember(PeerCount);
         TypeMember(Peers);
         TypeMember(GroupCount);
@@ -1717,6 +1732,35 @@ public:
             }
             Dest.Ptr = _buf;
             Dest.Type = pStringType;
+            return true;
+        case Debug:
+            Dest.DWord = Node::get().debugging();
+            Dest.Type = pBoolType;
+            return true;
+        case LocalEcho:
+            Dest.DWord = Node::get().local_echo();
+            Dest.Type = pBoolType;
+            return true;
+        case CommandEcho:
+            Dest.DWord = Node::get().command_echo();
+            Dest.Type = pBoolType;
+            return true;
+        case FullNames:
+            Dest.DWord = Node::get().full_names();
+            Dest.Type = pBoolType;
+            return true;
+        case FrontDelim:
+            Dest.DWord = Node::get().front_delimiter();
+            Dest.Type = pBoolType;
+            return true;
+        case Timeout:
+            strcpy_s(_buf, ReadVar("General", "Query Timeout").c_str());
+            Dest.Ptr = _buf;
+            Dest.Type = pStringType;
+            return true;
+        case ObserveDelay:
+            Dest.DWord = Node::get().observe_delay();
+            Dest.Type = pIntType;
             return true;
         case PeerCount:
             _peers = Node::get().get_peers();

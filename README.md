@@ -54,3 +54,24 @@ I have added some simple echo commands in addition to `/dinfo` and `/dobserve`, 
 * `/dnet [<arg>]` -- sets some variables, gives info, check  in-game output for use
 * `/dobserve <name> [-q <query>] [-o <result>] [-drop]` -- add an observer on name and update values in result, or drop the observer
 * `/dquery <name> [-q <query>] [-o <result>] [-t <timeout>]` -- execute query on name and store return in result
+
+
+### TLO Members
+* `Name` -- current node name (fully qualified)
+* `Debug` -- debugging flag
+* `LocalEcho` -- local echo flag (outgoing echo)
+* `CommandEcho` -- command echo (incoming commands)
+* `FullNames` -- print fully qualified names?
+* `FrontDelim` -- use a front | in arrays?
+* `Timeout` -- timeout for implicit delay in `/dquery` and `/dobserve` commands
+* `ObserveDelay` -- delay between observe broadcasts
+* `PeerCount` -- number of connected peers
+* `Peers` -- list of connected peers
+* `GroupCount` -- number of all groups
+* `Groups` -- list of all groups
+* `JoinedCount` -- number of joined groups
+* `Joined` -- list of joined groups
+* `O` `Observe` -- observe accessor, accessed like: `${DanNet[peer_name].Observe[query]}`
+* `Q` `Query` -- query accessor, for last executed query
+
+Both `Observe and `Query` are their own data types, which provide a `Received` member to determine the last received timestamp, or 0 for never received. Used like `${DanNet.Q.Received}`
