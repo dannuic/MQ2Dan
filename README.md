@@ -52,4 +52,5 @@ I have added some simple echo commands in addition to `/dinfo` and `/dobserve`, 
 * `/dgexecute <group> <command>` -- executes a command on all clients in a group (except own)
 * `/dgaexecute <group> <command>` -- executes a command on all clients in a group (including own)
 * `/dnet [<arg>]` -- sets some variables, gives info, check  in-game output for use
+* `/dobserve <name> [-q <query>] [-o <result>] [-drop]` -- add an observer on name and update values in result, or drop the observer
 * `/dquery <name> [-q <query>] [-o <result>] [-t <timeout>]` -- execute query on name and store return in result

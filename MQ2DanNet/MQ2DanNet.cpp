@@ -52,7 +52,7 @@ PreSetup("MQ2DanNet");
 public:\
     static const std::string name() { return #_Name; }\
     static const bool callback(std::stringstream&& args);\
-    static std::stringstream pack( ##__VA_ARGS__ );\
+    static std::stringstream pack(const std::string& recipient, ##__VA_ARGS__ );\
 private:\
     _Name() = delete;\
     _Name(const _Name&) = delete;\
@@ -74,13 +74,13 @@ namespace MQ2DanNet {
 
         template<typename T, typename... Args>
         void whisper(const std::string& recipient, Args&&... args) {
-            std::stringstream arg_stream = pack<T>(std::forward<Args>(args)...);
+            std::stringstream arg_stream = pack<T>(recipient, std::forward<Args>(args)...);
             respond(recipient, name<T>(), std::move(arg_stream));
         }
 
         template<typename T, typename... Args>
         void shout(const std::string& group, Args&&... args) {
-            std::stringstream arg_stream = pack<T>(std::forward<Args>(args)...);
+            std::stringstream arg_stream = pack<T>(group, std::forward<Args>(args)...);
             publish(group, name<T>(), std::move(arg_stream));
         }
 
@@ -136,6 +136,7 @@ namespace MQ2DanNet {
 
         // finds query and returns the observation group, generates new group name if query not found
         MQ2DANNET_NODE_API std::string register_observer(const std::string& group, const std::string& query);
+        MQ2DANNET_NODE_API void unregister_observer(const std::string& query);
         MQ2DANNET_NODE_API void observe(const std::string& group, const std::string& name, const std::string& query);
         MQ2DANNET_NODE_API void forget(const std::string& group);
         MQ2DANNET_NODE_API void forget(const std::string& name, const std::string& query);
@@ -151,19 +152,15 @@ namespace MQ2DanNet {
                 auto tick = MQGetTickCount64();
                 if (tick - observer_it->second.last >= std::max<unsigned __int64>(10 * observer_it->second.benchmark, observe_delay())) { // wait at least a second between updates
                     std::string group = observer_group(observer_it->first);
-                    auto group_peers = get_group_peers();
-                    auto group_it = group_peers.cbegin();
-                    if (group_it != group_peers.cend() && !group_it->second.empty()) {
-                        shout<T>(group_it->first, observer_it->second.query, std::forward<Args>(args)...);
+                    shout<T>(group, observer_it->second.query, std::forward<Args>(args)...);
 
-                        auto proc_time = MQGetTickCount64() - tick;
-                        if (observer_it->second.benchmark == 0)
-                            observer_it->second.benchmark = proc_time;
-                        else
-                            observer_it->second.benchmark = static_cast<unsigned __int64>(0.5 * (observer_it->second.benchmark + proc_time));
+                    auto proc_time = MQGetTickCount64() - tick;
+                    if (observer_it->second.benchmark == 0)
+                        observer_it->second.benchmark = proc_time;
+                    else
+                        observer_it->second.benchmark = static_cast<unsigned __int64>(0.5 * (observer_it->second.benchmark + proc_time));
 
-                        observer_it->second.last = tick;
-                    }
+                    observer_it->second.last = tick;
                 }
             }
         }
@@ -265,12 +262,11 @@ namespace MQ2DanNet {
 
         // this is a private helper function ONLY THE STATIC ACTOR FUNCTION SHOULD CALL THIS
         std::string peer_uuid(const std::string& name) {
+            std::string full_name = get_full_name(name);
             std::string uuid;
-
             zlist_t* peers = zyre_peers(_node);
 
             if (peers) {
-                std::string full_name = get_full_name(name);
                 const char* z_peer = reinterpret_cast<const char*>(zlist_first(peers));
                 while (z_peer) {
                     std::string peer_name(zyre_peer_header_value(_node, z_peer, "name"));
@@ -1005,6 +1001,15 @@ MQ2DANNET_NODE_API std::string MQ2DanNet::Node::register_observer(const std::str
     return observer_group(position);
 }
 
+MQ2DANNET_NODE_API void MQ2DanNet::Node::unregister_observer(const std::string& query) {
+    for (auto observer : _observer_map) {
+        if (observer.second.query == query) {
+            _observer_map.erase(observer.first);
+            return;
+        }
+    }
+}
+
 MQ2DANNET_NODE_API void MQ2DanNet::Node::observe(const std::string& group, const std::string& name, const std::string& query) {
     join(group);
     _observed_map[Observed(query, name)] = group;
@@ -1245,7 +1250,7 @@ const bool MQ2DanNet::Echo::callback(std::stringstream&& args) {
     }
 }
 
-std::stringstream MQ2DanNet::Echo::pack(const std::string& message) {
+std::stringstream MQ2DanNet::Echo::pack(const std::string& recipient, const std::string& message) {
     std::stringstream send_stream;
     Archive<std::stringstream> send(send_stream);
     send << message;
@@ -1284,7 +1289,7 @@ const bool MQ2DanNet::Execute::callback(std::stringstream&& args) {
     }
 }
 
-std::stringstream MQ2DanNet::Execute::pack(const std::string& command) {
+std::stringstream MQ2DanNet::Execute::pack(const std::string& recipient, const std::string& command) {
     std::stringstream send_stream;
     Archive<std::stringstream> send(send_stream);
     send << command;
@@ -1317,7 +1322,7 @@ const bool MQ2DanNet::Query::callback(std::stringstream&& args) {
 }
 
 // we're going to generate a new command and register it with Node here in addition to packing
-std::stringstream MQ2DanNet::Query::pack(const std::string& request) {
+std::stringstream MQ2DanNet::Query::pack(const std::string& recipient, const std::string& request) {
     std::stringstream send_stream;
     Archive<std::stringstream> send(send_stream);
 
@@ -1379,8 +1384,7 @@ const bool MQ2DanNet::Observe::callback(std::stringstream&& args) {
         Archive<std::stringstream> ar(args);
 
         // This can install invalid queries, which is by design. We have no way to determine when some queries are valid or invalid
-        std::string return_group = Node::get().register_observer(from.c_str(), query.c_str());
-        ar << return_group;
+        ar << Node::get().register_observer(from, query) << Node::get().parse_query(query);
 
         Node::get().respond(from, key, std::move(args));
     } catch (std::runtime_error&) {
@@ -1390,11 +1394,26 @@ const bool MQ2DanNet::Observe::callback(std::stringstream&& args) {
     return false;
 }
 
-std::stringstream MQ2DanNet::Observe::pack(const std::string& query, const std::string& output) {
+std::stringstream MQ2DanNet::Observe::pack(const std::string& recipient, const std::string& query, const std::string& output) {
     std::stringstream send_stream;
     Archive<std::stringstream> send(send_stream);
 
     std::string final_query = Node::get().trim_query(query);
+
+    if (recipient == Node::get().name()) {
+        std::string new_group = Node::get().register_observer(recipient, final_query);
+        Node::get().observe(new_group, recipient, final_query);
+        Node::get().update(new_group, "NULL", output);
+
+        std::stringstream self_send_stream;
+        Archive<std::stringstream> self_send(self_send_stream);
+
+        self_send << Node::get().name() << new_group << Node::get().parse_query(final_query);
+        Update::callback(std::move(self_send_stream));
+
+        // this isn't going to get sent anywhere.
+        return std::stringstream();
+    }
 
     // this is the callback to actually start observing. We can't just do it because the observed will come back with the right group 
     auto f = [final_query, output = move(output)](std::stringstream&& args) -> bool {
@@ -1402,12 +1421,19 @@ std::stringstream MQ2DanNet::Observe::pack(const std::string& query, const std::
         std::string from;
         std::string group;
         std::string new_group;
+        std::string data;
 
         try {
-            ar >> from >> group >> new_group;
+            ar >> from >> group >> new_group >> data;
             if (!new_group.empty()) {
                 Node::get().observe(new_group, from, final_query);
                 Node::get().update(new_group, "NULL", output);
+
+                std::stringstream self_send_stream;
+                Archive<std::stringstream> self_send(self_send_stream);
+
+                self_send << Node::get().name() << new_group << data;
+                Update::callback(std::move(self_send_stream));
             }
         } catch (std::runtime_error&) {
             DebugSpewAlways("MQ2DanNet::Observe -- response -- Failed to deserialize.");
@@ -1433,22 +1459,33 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
         DebugSpewAlways("UPDATE --> FROM: %s, GROUP: %s, DATA: %s", from.c_str(), group.c_str(), data.c_str());
 
         std::string output = Node::get().read(group).output;
-        MQ2TYPEVAR Result = Node::get().parse_response(output, data);
+        CHAR szOutput[MAX_STRING] = { 0 };
+        strcpy_s(szOutput, output.c_str());
 
-        CHAR szBuf[MAX_STRING] = { 0 };
-        if (Result.Type)
-            Result.Type->ToString(Result.VarPtr, szBuf);
-        else
-            strcpy_s(szBuf, "NULL");
-        Node::get().update(group, std::string(szBuf), output);
+        if (output.empty() || FindMQ2DataVariable(szOutput)) {
+            MQ2TYPEVAR Result = Node::get().parse_response(output, data);
 
-        if (Node::get().debugging()) {
-            if (Result.Type) {
-                CHAR szData[MAX_STRING] = { 0 };
-                Result.Type->ToString(Result.VarPtr, szData);
-                WriteChatf("%s : %s -- %llu (%llu)", Result.Type->GetName(), szData, Node::get().read(group).received, MQGetTickCount64());
-            } else
-                WriteChatf("Failed to read data %s into %s at %llu.", data.c_str(), output.c_str(), MQGetTickCount64());
+            CHAR szBuf[MAX_STRING] = { 0 };
+            if (Result.Type)
+                Result.Type->ToString(Result.VarPtr, szBuf);
+            else
+                strcpy_s(szBuf, "NULL");
+
+            Node::get().update(group, std::string(szBuf), output);
+
+            if (Node::get().debugging()) {
+                if (Result.Type) {
+                    CHAR szData[MAX_STRING] = { 0 };
+                    Result.Type->ToString(Result.VarPtr, szData);
+                    WriteChatf("%s : %s -- %llu (%llu)", Result.Type->GetName(), szData, Node::get().read(group).received, MQGetTickCount64());
+                } else
+                    WriteChatf("Failed to read data %s into %s at %llu.", data.c_str(), output.c_str(), MQGetTickCount64());
+            }
+        } else {
+            // if we are storing to a variable, we need to drop the observer if the variable goes out of scope
+            Node::get().forget(group);
+            if (Node::get().debugging())
+                WriteChatf("Could not find var %s at %llu.", output.c_str(), MQGetTickCount64());
         }
     } catch (std::runtime_error&) {
         DebugSpewAlways("MQ2DanNet::Update -- failed to deserialize.");
@@ -1457,10 +1494,23 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
     return false;
 }
 
-std::stringstream MQ2DanNet::Update::pack(const std::string& query) {
+std::stringstream MQ2DanNet::Update::pack(const std::string& recipient, const std::string& query) {
     std::stringstream send_stream;
+    std::string result = Node::get().parse_query(query);
+
     Archive<std::stringstream> send(send_stream);
-    send << Node::get().parse_query(query);
+    send << result;
+
+    // Update is never whispered, so we can assume that recipient is the group to update
+    auto groups = Node::get().get_own_groups();
+    if (groups.find(recipient) != groups.end()) {
+        // also need to send this to self if we are observing self
+        std::stringstream self_send_stream;
+        Archive<std::stringstream> self_send(self_send_stream);
+
+        self_send << Node::get().name() << recipient << result;
+        callback(std::move(self_send_stream));
+    }
 
     return send_stream;
 }
@@ -1762,13 +1812,10 @@ public:
             Dest.Type = pStringType;
             return true;
         case Q:
+        case Query:
             _current_observation = Node::Observation(Node::get().query());
             Dest.Ptr = &_current_observation;
             Dest.Type = pDanObservationType;
-            return true;
-        case Query:
-            Dest.DWord = Node::get().query().received > 0;
-            Dest.Type = pBoolType;
             return true;
         }
 
@@ -1777,16 +1824,7 @@ public:
             case O:
             case Observe:
                 if (Index && Index[0] != '\0') {
-                    if (local_peer == Node::get().name()) {
-                        // we're looking at ourself, so let's just run the query like normal
-                        strcpy_s(_buf, Node::get().parse_query(Index).c_str());
-                    } else {
-                        if (!Node::get().can_read(local_peer, Index)) {
-                            // we didn't have this observer in our map, let's submit a request for the observer
-                            Node::get().whisper<MQ2DanNet::Observe>(local_peer, Index, "");
-                        }
-                        _current_observation = Node::get().read(local_peer, Index);
-                    }
+                    _current_observation = Node::get().read(local_peer, Node::get().trim_query(Index));
 
                     Dest.Ptr = &_current_observation;
                     Dest.Type = pDanObservationType;
@@ -2042,29 +2080,58 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 
 PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     CHAR szName[MAX_STRING] = { 0 };
+    CHAR szParam[MAX_STRING] = { 0 };
     GetArg(szName, szLine, 1);
     auto name = Node::init_string(szName);
     if (std::string::npos == name.find_last_of("_"))
         name = Node::get().get_full_name(name);
 
-    CHAR szQuery[MAX_STRING] = { 0 };
-    GetArg(szQuery, szLine, 2);
-    std::string query(szQuery ? szQuery : "");
+    std::string query;
+    std::string output;
+    std::string timeout;
+    bool drop = false;
+
+    int current_param = 1;
+    do {
+        GetArg(szParam, szLine, ++current_param);
+        if (!strncmp(szParam, "-q", 2)) {
+            GetArg(szParam, szLine, ++current_param);
+            if (szParam) query = szParam;
+        } else if (!strncmp(szParam, "-o", 2)) {
+            GetArg(szParam, szLine, ++current_param);
+            if (szParam) output = szParam;
+        } else if (!strncmp(szParam, "-t", 2)) {
+            GetArg(szParam, szLine, ++current_param);
+            if (szParam) timeout = szParam;
+        } else if (!strncmp(szParam, "-d", 2)) {
+            drop = true;
+        } else if (szParam[0] == '-') {
+            // don't understand the switch, let's just fast-forward
+            ++current_param;
+        }
+    } while ((szParam && szParam[0] != '\0') || current_param > 10);
 
     if (name.empty() || query.empty()) {
-        WriteChatColor("Syntax: /dobserve <name> <query> -- start observe query on name", USERCOLOR_DEFAULT);
-        WriteChatColor("        /dobserve <name> <query> [drop] -- drop observe query on name", USERCOLOR_DEFAULT);
-    } else if (name == Node::get().name()) {
-        // observing ourself doesn't make sense
-        SyntaxError("/dobserve: cannot set an observer on self!");
+        WriteChatColor("Syntax: /dobserve <name> [-q <query>] [-o <result>] [-drop] -- add an observer on name and update values in result, or drop the observer", USERCOLOR_DEFAULT);
+    } else if (drop) {
+        Node::get().forget(name, query);
     } else {
-        CHAR szParam[MAX_STRING] = { 0 };
-        GetArg(szParam, szLine, 3);
+        auto peers = Node::get().get_peers();
+        if (peers.find(name) == peers.end()) {
+            DebugSpewAlways("/dobserve: Can not find peer %s in %s!", name.c_str(), CreateArray(peers).c_str());
+            return;
+        }
 
-        if (szParam && Node::init_string(szParam) == "drop") {
-            Node::get().forget(name, query);
-        } else {
-            Node::get().whisper<Observe>(name, query, "");
+        if (!Node::get().can_read(name, query))
+            Node::get().whisper<Observe>(name, query, output);
+
+        if (timeout.empty()) timeout = ReadVar("General", "Query Timeout");
+
+        PCHARINFO pChar = GetCharInfo();
+        if (pChar) {
+            CHAR szDelay[MAX_STRING] = { 0 };
+            strcpy_s(szDelay, (timeout + " ${DanNet[" + name + "].O[\"" + Node::get().trim_query(query) + "\"].Received}").c_str());
+            Delay(pChar->pSpawn, szDelay);
         }
     }
 }
@@ -2123,7 +2190,6 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 
         if (timeout.empty()) timeout = ReadVar("General", "Query Timeout");
 
-        // Delay and then NewVarset
         PCHARINFO pChar = GetCharInfo();
         if (pChar) {
             CHAR szDelay[MAX_STRING] = { 0 };
