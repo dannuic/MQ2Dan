@@ -1,6 +1,7 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
- * dannuig: version 0.3 -- revamped dquery, dobserve, and all TLO's
+ * dannuic: version 0.4 -- major potentialy stability fixes (to ensure we are never waiting on a recv in the main thread)
+ * dannuic: version 0.3 -- revamped dquery, dobserve, and all TLO's
  * dannuic: version 0.2 -- Added parseable outputs and tracked peers/groups from underlying tech
  * dannuic: version 0.1 -- initial version, can set observers and perform queries, see README.md for more information
  */
@@ -37,7 +38,7 @@
 #include <set>
 #include <string>
 
-PLUGIN_VERSION(0.3);
+PLUGIN_VERSION(0.4);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -169,8 +170,14 @@ namespace MQ2DanNet {
     private:
         std::string _node_name;
 
+        std::vector<std::function<bool(const std::string&, const std::string&)> > _enter_callbacks;
+        std::vector<std::function<bool(const std::string&, const std::string&)> > _exit_callbacks;
         std::vector<std::function<bool(const std::string&, const std::string&)> > _join_callbacks;
         std::vector<std::function<bool(const std::string&, const std::string&)> > _leave_callbacks;
+
+        std::map<std::string, std::string> _connected_peers; // peer_name, peer_uuid
+        std::map<std::string, std::set<std::string> > _peer_groups; // group name, peer_names
+        std::set<std::string> _own_groups; // group name
 
         // I don't like this, but since zyre/czmq does the memory management for these, I should store these as raw pointers
         zyre_t *_node;
@@ -295,23 +302,7 @@ namespace MQ2DanNet {
             if (_node_name == get_full_name(peer))
                 return true;
 
-            if (_actor) {
-                zmsg_t *msg = zmsg_new();
-                zmsg_pushstr(msg, peer.c_str());
-                zmsg_pushstr(msg, "PEER");
-                zmsg_send(&msg, _actor);
-
-                char *uuid = zstr_recv(_actor);
-                std::string ret;
-                if (uuid) {
-                    ret = uuid;
-                    zstr_free(&uuid);
-                }
-
-                return !ret.empty();
-            }
-
-            return false;
+            return _connected_peers.find(peer) != _connected_peers.end();
         }
 
         size_t peers() {
@@ -506,76 +497,28 @@ MQ2DANNET_NODE_API const std::string Node::get_info() {
 
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peers() {
     std::set<std::string> peers;
-
-    if (_actor) {
-        zstr_send(_actor, "PEERS");
-
-        zmsg_t *msg = zmsg_recv(_actor);
-        if (msg) {
-            char *peer = zmsg_popstr(msg);
-            while (peer) {
-                if (strlen(peer) > 0) peers.emplace(peer); // empty peers aren't valid, this can happen when we have no peers
-                zstr_free(&peer);
-
-                peer = zmsg_popstr(msg);
-            }
-
-            zmsg_destroy(&msg);
-        }
-    }
-
-    peers.emplace(_node_name);
+    std::transform(_connected_peers.cbegin(), _connected_peers.cend(), std::inserter(peers, peers.begin()),
+        [](std::pair<std::string, std::string> key_val) -> std::string {
+        return key_val.first;
+    });
 
     return peers;
 }
 
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_all_groups() {
     std::set<std::string> groups;
+    std::transform(_peer_groups.cbegin(), _peer_groups.cend(), std::inserter(groups, groups.begin()),
+        [](std::pair<std::string, std::set<std::string> > key_val) ->std::string {
+        return key_val.first;
+    });
 
-    if (_actor) {
-        zstr_send(_actor, "PEER_GROUPS");
-
-        zmsg_t *msg = zmsg_recv(_actor);
-        if (msg) {
-            char *group = zmsg_popstr(msg);
-            while (group) {
-                if (strlen(group) > 0) groups.emplace(group);
-                zstr_free(&group);
-
-                group = zmsg_popstr(msg);
-            }
-
-            zmsg_destroy(&msg);
-        }
-    }
-
-    std::set<std::string> own_groups = get_own_groups();
-    groups.insert(own_groups.begin(), own_groups.end());
+    groups.insert(_own_groups.cbegin(), _own_groups.cend());
 
     return groups;
 }
 
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_own_groups() {
-    std::set<std::string> groups;
-
-    if (_actor) {
-        zstr_send(_actor, "OWN_GROUPS");
-
-        zmsg_t *msg = zmsg_recv(_actor);
-        if (msg) {
-            char *group = zmsg_popstr(msg);
-            while (group) {
-                if (strlen(group) > 0) groups.emplace(group);
-                zstr_free(&group);
-
-                group = zmsg_popstr(msg);
-            }
-
-            zmsg_destroy(&msg);
-        }
-    }
-
-    return groups;
+    return _own_groups;
 }
 
 MQ2DANNET_NODE_API const std::map<std::string, std::set<std::string>> MQ2DanNet::Node::get_group_peers() {
@@ -592,21 +535,9 @@ MQ2DANNET_NODE_API const std::map<std::string, std::set<std::string>> MQ2DanNet:
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_group_peers(const std::string& group) {
     std::set<std::string> peers;
 
-    if (_actor) {
-        zstr_sendx(_actor, "PEERS_BY_GROUP", group.c_str(), NULL);
-
-        zmsg_t *msg = zmsg_recv(_actor);
-        if (msg) {
-            char *peer = zmsg_popstr(msg);
-            while (peer) {
-                if (strlen(peer) > 0) peers.emplace(peer);
-                zstr_free(&peer);
-
-                peer = zmsg_popstr(msg);
-            }
-
-            zmsg_destroy(&msg);
-        }
+    auto group_it = _peer_groups.find(group);
+    if (group_it != _peer_groups.end()) {
+        peers = group_it->second;
     }
 
     if (is_in_group(group))
@@ -700,12 +631,14 @@ void Node::node_actor(zsock_t *pipe, void *args) {
             } else if (streq(command, "JOIN")) {
                 char *group = zmsg_popstr(msg);
                 if (group) {
+                    node->_own_groups.emplace(group);
                     zyre_join(node->_node, group);
                     zstr_free(&group);
                 }
             } else if (streq(command, "LEAVE")) {
                 char *group = zmsg_popstr(msg);
                 if (group) {
+                    node->_own_groups.erase(group);
                     zyre_leave(node->_node, group);
                     zstr_free(&group);
                 }
@@ -871,11 +804,16 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 std::string uuid = init_string(zyre_event_peer_uuid(z_event));
                 if (uuid.empty()) {
                     DebugSpewAlways("MQ2DanNet: ENTER with empty UUID for name %s, will not add to peers list.", name.c_str());
+                } else {
+                    node->_connected_peers[name] = uuid;
                 }
-                //DebugSpewAlways("%s is ENTERing.", name.c_str());
+                DebugSpewAlways("%s is ENTERing.", name.c_str());
             } else if (event_type == "EXIT") {
-                // nothing to do here
-                //DebugSpewAlways("%s is EXITing.", name.c_str());
+                node->_connected_peers.erase(name);
+                for (auto group : node->_peer_groups) {
+                    group.second.erase(name);
+                }
+                DebugSpewAlways("%s is EXITing.", name.c_str());
             } else if (event_type == "JOIN") {
                 std::string group = init_string(zyre_event_group(z_event));
 
@@ -888,6 +826,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                         else
                             ++callback_it;
                     }
+                    node->_peer_groups[group].emplace(name);
                     DebugSpewAlways("JOIN %s : %s", group.c_str(), name.c_str());
                 }
             } else if (event_type == "LEAVE") {
@@ -902,8 +841,13 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                         else
                             ++callback_it;
                     }
+                    auto group_it = node->_peer_groups.find(group);
+                    if (group_it != node->_peer_groups.end()) {
+                        group_it->second.erase(name);
+                        if (group_it->second.empty()) node->_peer_groups.erase(group_it);
+                    }
+                    DebugSpewAlways("LEAVE %s : %s", group.c_str(), name.c_str());
                 }
-                DebugSpewAlways("LEAVE %s : %s", group.c_str(), name.c_str());
             } else if (event_type == "WHISPER") {
                 // use get_msg because we want ownership to pass the command up
                 zmsg_t *message = zyre_event_get_msg(z_event);
@@ -1173,17 +1117,9 @@ MQ2TYPEVAR MQ2DanNet::Node::parse_response(const std::string& output, const std:
 }
 
 std::string MQ2DanNet::Node::peer_address(const std::string& name) {
-    if (_actor) {
-        zstr_sendx(_actor, "PEER_ADDRESS", name.c_str(), NULL);
-
-        char *addr = zstr_recv(_actor);
-        std::string ret;
-        if (addr) {
-            ret = addr;
-            zstr_free(&addr);
-        }
-
-        return ret;
+    auto peer_it = _connected_peers.find(name);
+    if (peer_it != _connected_peers.end()) {
+        return peer_it->second;
     }
 
     return std::string();
@@ -2003,7 +1939,7 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             SetVar("General", "Keepalive", GetDefault("Keepalive"));
         Node::get().keepalive(atoi(ReadVar("Keepalive").c_str()));
     } else if (szParam && !strcmp(szParam, "info")) {
-        WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%f\ax", MQ2Version);
+        WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.2f\ax", MQ2Version);
         WriteChatf("%s", Node::get().get_info().c_str());
     } else {
         WriteChatf("\ax\atMQ2DanNet:\ax unrecognized /dnet argument \ar%s\ax. Valid arguments are: ", szParam);
@@ -2341,7 +2277,7 @@ PLUGIN_API VOID InitializePlugin(VOID) {
 
     pDanObservationType = new MQ2DanObservationType;
 
-    WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%f\ax", MQ2Version);
+    WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.2f\ax", MQ2Version);
 }
 
 // Called once, when the plugin is to shutdown
