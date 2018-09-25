@@ -1,6 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
- * dannuic: version 0.4 -- major potentialy stability fixes (to ensure we are never waiting on a recv in the main thread)
+ * dannuic: version 0.4 -- major potentialy stability fixes (to ensure we are never waiting on a recv in the main thread), added default group for all /dg commands as all
  * dannuic: version 0.3 -- revamped dquery, dobserve, and all TLO's
  * dannuic: version 0.2 -- Added parseable outputs and tracked peers/groups from underlying tech
  * dannuic: version 0.1 -- initial version, can set observers and perform queries, see README.md for more information
@@ -2032,9 +2032,15 @@ PLUGIN_API VOID DGtellCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     GetArg(szGroup, szLine, 1);
     auto group = Node::init_string(szGroup);
     std::string message(szLine);
-    std::string::size_type n = message.find_first_not_of(" \t", 0);
-    n = message.find_first_of(" \t", n);
-    message.erase(0, message.find_first_not_of(" \t", n));
+
+    std::set<std::string> groups = Node::get().get_all_groups();
+    if (groups.find(group) != groups.end()) {
+        std::string::size_type n = message.find_first_not_of(" \t", 0);
+        n = message.find_first_of(" \t", n);
+        message.erase(0, message.find_first_not_of(" \t", n));
+    } else {
+        group = "all";
+    }
 
     if (group.empty() || message.empty())
         WriteChatColor("Syntax: /dgtell <group> <message> -- broadcast message to group", USERCOLOR_DEFAULT);
@@ -2069,9 +2075,15 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     GetArg(szGroup, szLine, 1);
     auto group = Node::init_string(szGroup);
     std::string command(szLine);
-    std::string::size_type n = command.find_first_not_of(" \t", 0);
-    n = command.find_first_of(" \t", n);
-    command.erase(0, command.find_first_not_of(" \t", n));
+
+    std::set<std::string> groups = Node::get().get_all_groups();
+    if (groups.find(group) != groups.end()) {
+        std::string::size_type n = command.find_first_not_of(" \t", 0);
+        n = command.find_first_of(" \t", n);
+        command.erase(0, command.find_first_not_of(" \t", n));
+    } else {
+        group = "all";
+    }
 
     if (group.empty() || command.empty())
         WriteChatColor("Syntax: /dgexecute <group> <command> -- direct group to execute command", USERCOLOR_DEFAULT);
@@ -2087,9 +2099,15 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     GetArg(szGroup, szLine, 1);
     auto group = Node::init_string(szGroup);
     std::string command(szLine);
-    std::string::size_type n = command.find_first_not_of(" \t", 0);
-    n = command.find_first_of(" \t", n);
-    command.erase(0, command.find_first_not_of(" \t", n));
+
+    std::set<std::string> groups = Node::get().get_all_groups();
+    if (groups.find(group) != groups.end()) {
+        std::string::size_type n = command.find_first_not_of(" \t", 0);
+        n = command.find_first_of(" \t", n);
+        command.erase(0, command.find_first_not_of(" \t", n));
+    } else {
+        group = "all";
+    }
 
     if (group.empty() || command.empty())
         WriteChatColor("Syntax: /dgaexecute <group> <command> -- direct group to execute command", USERCOLOR_DEFAULT);
