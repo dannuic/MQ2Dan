@@ -44,8 +44,8 @@ Examples:
 
 ### Commands
 I have added some simple echo commands in addition to `/dinfo` and `/dobserve`, as well as a way to join/leave arbitrary groups.
-* `/djoin <group>` -- join a group
-* `/dleave <group>` -- leave a group
+* `/djoin <group> [all|save]` -- join a group, and optionally write to `[General]` or `[server_character]` (all or save, respectively)
+* `/dleave <group> [all|save]` -- leave a group, and optionally write to `[General]` or `[server_character]` (all or save, respectively)
 * `/dtell <name> <text>` -- echo text on peer's console
 * `/dgtell <group> <text>` -- echo text on console for all peers in group
 * `/dexecute <name> <command>` -- executes a command on peer's client
@@ -76,3 +76,22 @@ I have added some simple echo commands in addition to `/dinfo` and `/dobserve`, 
 * `Q` `Query` -- query accessor, for last executed query
 
 Both `Observe and `Query` are their own data types, which provide a `Received` member to determine the last received timestamp, or 0 for never received. Used like `${DanNet.Q.Received}`
+
+
+### INI entries (`MQ2DanNet.ini`)
+* `[General]`
+  * `Groups` -- `|`-delimited list of groups for all characters to auto-join, default empty
+  * `Debugging` -- on/off/true/false boolean for debugging output, default `off`
+  * `Local Echo` -- on/off/true/false boolean for local echo, default `on`
+  * `Command Echo` -- on/off/true/false boolean for remote and local command (`/dgex`, &c) output, default `on`
+  * `Full Names` -- on/off/true/false boolean for displaying fully-qualified names (on means that all names are displayed as `server_character`), default `on`
+  * `Front Delimiter` -- on/off/true/false boolean for putting the `|` at the front for the TLO output of `DanNet.Peers` &c, default `off`
+  * `Query Timeout` -- timeout string for implicit delay in `/dquery` and `/dobserve`, default is `1s`
+  * `Observe Delay` -- delay in milliseconds for observation evaluations to be sent, default is `1000`
+  * `Keepalive` -- timeout in milliseconds before an unresponsive peer is dropped, default is `30000`
+  * `Tank` -- short-name class list to auto-join the tank channel, default is `war|pal|shd|`
+  * `Priest` -- short-name class list to auto-join the priest channel, default is `clr|dru|shm|`
+  * `Melee` -- short-name class list to auto-join the melee channel, default is `brd|rng|mnk|rog|bst|ber|`
+  * `Caster` -- short-name class list to auto-join the caster channel, default is `nec|wiz|mag|enc|`
+* `[server_character]`
+  * `Groups` -- `|`-delimited list of groups for this specific character to auto-join, default empty
