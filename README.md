@@ -7,8 +7,8 @@
 #### Some Notes about Setup
 * Some complicated network topologies won't be supported (a server interface is a better solution)
 * If for some reason the peers aren't self-discovering on a local network
-  * check the output of `/dinfo interface`
-  * set one of the discovered interface names with `/dinfo interface <name>`
+  * check the output of `/dnet interface`
+  * set one of the discovered interface names with `/dnet interface <name>`
   * failing that, I'll have to look into why, so contact me with as much info as possible
 
 ### Use
@@ -43,7 +43,6 @@ Examples:
 
 
 ### Commands
-I have added some simple echo commands in addition to `/dinfo` and `/dobserve`, as well as a way to join/leave arbitrary groups.
 * `/djoin <group> [all|save]` -- join a group, and optionally write to `[General]` or `[server_character]` (all or save, respectively)
 * `/dleave <group> [all|save]` -- leave a group, and optionally write to `[General]` or `[server_character]` (all or save, respectively)
 * `/dtell <name> <text>` -- echo text on peer's console
