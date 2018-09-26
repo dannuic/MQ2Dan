@@ -349,6 +349,8 @@ namespace MQ2DanNet {
 
         void enter();
         void exit();
+        void startup();
+        void set_timeout(int timeout);
         void shutdown();
 
         void do_next();
@@ -575,7 +577,6 @@ MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_full_name(const std::s
 void Node::node_actor(zsock_t *pipe, void *args) {
     Node *node = reinterpret_cast<Node*>(args);
     if (!node) return;
-
 
     node->_node = zyre_new(node->_node_name.c_str());
     if (!node->_node) throw new std::invalid_argument("Could not create node");
@@ -918,8 +919,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     zyre_stop(node->_node);
     zclock_sleep(100);
     zyre_destroy(&node->_node);
-    zsock_signal(pipe, 0);
-    zsock_signal(pipe, 0);
+    zclock_sleep(100);
 }
 
 std::string Node::init_string(const char *szStr) {
@@ -1151,6 +1151,19 @@ void Node::exit() {
     }
 
     _node_name = "";
+}
+
+void MQ2DanNet::Node::startup() {
+    // ensure that startup has happened so that we can put our atexit at the proper place in the exit function queue
+    zsys_init();
+    atexit([]() -> void {
+        DebugSpewAlways("MQ2DanNet: ATEXIT CALLED");
+        zsys_set_linger(0);
+    });
+}
+
+void MQ2DanNet::Node::set_timeout(int timeout) {
+        zmq_setsockopt(_actor, ZMQ_RCVTIMEO, "", timeout);
 }
 
 void MQ2DanNet::Node::shutdown() {
@@ -2251,6 +2264,8 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 PLUGIN_API VOID InitializePlugin(VOID) {
 	DebugSpewAlways("Initializing MQ2DanNet");
 
+    Node::get().startup();
+
     Node::get().register_command<MQ2DanNet::Echo>();
     Node::get().register_command<MQ2DanNet::Execute>();
     Node::get().register_command<MQ2DanNet::Query>();
@@ -2331,12 +2346,13 @@ PLUGIN_API VOID ShutdownPlugin(VOID) {
 
 // Called once directly after initialization, and then every time the gamestate changes
 PLUGIN_API VOID SetGameState(DWORD GameState) {
-    if (GameState == GAMESTATE_LOGGINGIN)
-        Node::get().save_channels(); // these will get rejoined on actor load
-
     // TODO: Figure out why we can't re-use the instance through zoning 
     // (it should be maintainable through the GAMESTATE_LOGGINGIN -> GAMESTATE_INGAME cycle, but causes my node instance to get memset to null)
-    Node::get().exit();
+    if (GameState == GAMESTATE_LOGGINGIN || GameState == GAMESTATE_UNLOADING) { // UNLOADING is /q
+        Node::get().save_channels(); // these will get rejoined on actor load
+        Node::get().exit();
+        Node::get().shutdown();
+    }
 
     // TODO: What about other gamestates? There is potential for messaging there, but the naming would be off without a character
     if (GameState == GAMESTATE_INGAME) {
@@ -2365,6 +2381,13 @@ PLUGIN_API VOID SetGameState(DWORD GameState) {
         for (auto group : groups)
             Node::get().join(group);
     }
+}
+
+PLUGIN_API VOID OnBeginZone(VOID) {
+    // This stuff needs to be here to handle the thread getting closed (this is from quick-camping)
+    Node::get().save_channels();
+    Node::get().exit();
+    Node::get().shutdown();
 }
 
 // This is called every time MQ pulses
