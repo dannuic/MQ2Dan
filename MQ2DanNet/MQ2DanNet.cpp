@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.5 -- added handlers for thread exits that are not normally handled to ensure proper shutdown.
  * dannuic: version 0.4 -- major potentialy stability fixes (to ensure we are never waiting on a recv in the main thread), added default group for all /dg commands as all
  * dannuic: version 0.3 -- revamped dquery, dobserve, and all TLO's
  * dannuic: version 0.2 -- Added parseable outputs and tracked peers/groups from underlying tech
@@ -38,7 +39,7 @@
 #include <set>
 #include <string>
 
-PLUGIN_VERSION(0.4);
+PLUGIN_VERSION(0.5);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
