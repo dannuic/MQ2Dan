@@ -505,6 +505,8 @@ MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peers() {
         return key_val.first;
     });
 
+    peers.emplace(_node_name);
+
     return peers;
 }
 
@@ -1751,8 +1753,21 @@ public:
             Dest.Type = pIntType;
             return true;
         case PeerCount:
-            _peers = Node::get().get_peers();
-            Dest.DWord = _peers.size();
+            if (IsNumber(Index)) {
+                if (_groups.empty()) _groups = Node::get().get_all_groups();
+                int idx = atoi(Index) - 1;
+                auto group_it = _groups.cbegin();
+                std::advance(group_it, idx);
+                if (group_it != _groups.cend())
+                    Dest.DWord = Node::get().get_group_peers(*group_it).size();
+                else
+                    return false;
+            } else if (Index[0] != '\0') {
+                Dest.DWord = Node::get().get_group_peers(Node::init_string(Index)).size();
+            } else {
+                _peers = Node::get().get_peers();
+                Dest.DWord = _peers.size();
+            }
             Dest.Type = pIntType;
             return true;
         case Peers:
@@ -1769,7 +1784,7 @@ public:
                 }  else
                     return false;
             } else if (Index[0] != '\0') {
-                auto peers = Node::get().get_group_peers(Index);
+                auto peers = Node::get().get_group_peers(Node::init_string(Index));
                 std::set<std::string> out;
                 if (Node::get().full_names())
                     out = peers;
