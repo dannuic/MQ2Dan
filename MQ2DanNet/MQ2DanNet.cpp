@@ -1,10 +1,11 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
- * dannuic: version 0.5 -- added handlers for thread exits that are not normally handled to ensure proper shutdown.
- * dannuic: version 0.4 -- major potentialy stability fixes (to ensure we are never waiting on a recv in the main thread), added default group for all /dg commands as all
- * dannuic: version 0.3 -- revamped dquery, dobserve, and all TLO's
- * dannuic: version 0.2 -- Added parseable outputs and tracked peers/groups from underlying tech
- * dannuic: version 0.1 -- initial version, can set observers and perform queries, see README.md for more information
+ * dannuic: version 0.51 -- added more handlers for thread exits that are not normally handled to ensure proper shutdown.
+ * dannuic: version 0.5  -- added handlers for thread exits that are not normally handled to ensure proper shutdown.
+ * dannuic: version 0.4  -- major potentialy stability fixes (to ensure we are never waiting on a recv in the main thread), added default group for all /dg commands as all
+ * dannuic: version 0.3  -- revamped dquery, dobserve, and all TLO's
+ * dannuic: version 0.2  -- Added parseable outputs and tracked peers/groups from underlying tech
+ * dannuic: version 0.1  -- initial version, can set observers and perform queries, see README.md for more information
  */
 // MQ2DanNet.cpp : Defines the entry point for the DLL application.
 //
@@ -39,7 +40,7 @@
 #include <set>
 #include <string>
 
-PLUGIN_VERSION(0.5);
+PLUGIN_VERSION(0.51);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -766,6 +767,8 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 }
 
                 if (szKeepalive) zstr_free(&szKeepalive);
+            } else if (streq(command, "PING")) {
+                zsock_signal(pipe, 0);
             } else {
                 zframe_t *body = zmsg_pop(msg);
                 char *name = zmsg_popstr(msg);
@@ -1159,10 +1162,7 @@ void Node::exit() {
 void MQ2DanNet::Node::startup() {
     // ensure that startup has happened so that we can put our atexit at the proper place in the exit function queue
     zsys_init();
-    atexit([]() -> void {
-        DebugSpewAlways("MQ2DanNet: ATEXIT CALLED");
-        zsys_set_linger(0);
-    });
+    //atexit([]() -> void {});
 }
 
 void MQ2DanNet::Node::set_timeout(int timeout) {
@@ -2404,6 +2404,14 @@ PLUGIN_API VOID OnBeginZone(VOID) {
     Node::get().save_channels();
     Node::get().exit();
     Node::get().shutdown();
+}
+
+PLUGIN_API VOID OnCleanUI(VOID) {
+    if (!GetCharInfo()) { // can potentially check game state here, too. 255 (GAMESTATE_UNLOADING) might work. For some reason, `SetGameState` doesn't always get called
+        Node::get().save_channels();
+        Node::get().exit();
+        Node::get().shutdown();
+    }
 }
 
 // This is called every time MQ pulses
