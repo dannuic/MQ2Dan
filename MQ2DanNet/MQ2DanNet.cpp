@@ -349,6 +349,8 @@ namespace MQ2DanNet {
 
         void save_channels();
 
+        void clear_saved_channels();
+
         void enter();
         void exit();
         void startup();
@@ -921,6 +923,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
 
         zlist_destroy(&own_groups);
     }
+    node->_own_groups.clear();
 
     zyre_stop(node->_node);
     zclock_sleep(100);
@@ -1133,6 +1136,10 @@ std::string MQ2DanNet::Node::peer_address(const std::string& name) {
 
 void MQ2DanNet::Node::save_channels() {
     _rejoin_groups = get_own_groups();
+}
+
+void MQ2DanNet::Node::clear_saved_channels() {
+    _rejoin_groups.clear();
 }
 
 void Node::enter() {
@@ -2368,6 +2375,10 @@ PLUGIN_API VOID SetGameState(DWORD GameState) {
         Node::get().save_channels(); // these will get rejoined on actor load
         Node::get().exit();
         Node::get().shutdown();
+    }
+
+    if (GameState == GAMESTATE_CHARSELECT) {
+        Node::get().clear_saved_channels();
     }
 
     // TODO: What about other gamestates? There is potential for messaging there, but the naming would be off without a character
