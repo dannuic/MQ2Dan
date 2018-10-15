@@ -94,3 +94,7 @@ Both `Observe and `Query` are their own data types, which provide a `Received` m
   * `Caster` -- short-name class list to auto-join the caster channel, default is `nec|wiz|mag|enc|`
 * `[server_character]`
   * `Groups` -- `|`-delimited list of groups for this specific character to auto-join, default empty
+
+
+### Known Issues
+* Different network groups across PC's (specifically windows 10 with windows 7 machines) cause trouble connecting
