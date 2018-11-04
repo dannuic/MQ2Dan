@@ -1,5 +1,7 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.61 -- fixed stability issue with strings.
+ * dannuic: version 0.60 -- fixed stability issue with TLO returning address to local.
  * dannuic: version 0.51 -- added more handlers for thread exits that are not normally handled to ensure proper shutdown.
  * dannuic: version 0.5  -- added handlers for thread exits that are not normally handled to ensure proper shutdown.
  * dannuic: version 0.4  -- major potentialy stability fixes (to ensure we are never waiting on a recv in the main thread), added default group for all /dg commands as all
@@ -40,7 +42,7 @@
 #include <set>
 #include <string>
 
-PLUGIN_VERSION(0.51);
+PLUGIN_VERSION(0.61);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -133,6 +135,7 @@ namespace MQ2DanNet {
             std::string data;
             unsigned __int64 received;
 
+			Observation(const Observation& obs) : output(obs.output), data(obs.data), received(obs.received) {}
             Observation(const std::string& output) : output(output), data("NULL"), received(0) {}
             Observation(const std::string& output, const std::string& data, unsigned __int64 received) : output(output), data(data), received(received) {}
             Observation() : output(), data("NULL"), received(0) {}
@@ -304,7 +307,7 @@ namespace MQ2DanNet {
             if (_node_name == get_full_name(peer))
                 return true;
 
-            return _connected_peers.find(peer) != _connected_peers.end();
+            return _connected_peers.find(get_full_name(peer)) != _connected_peers.end();
         }
 
         size_t peers() {
@@ -1601,13 +1604,14 @@ std::set<std::string> ParseArray(const std::string& arr) {
     return tokens;
 }
 
+// leave all this here in case eqmule ever finds the cause for this to crash on live
 class MQ2DanObservationType *pDanObservationType = nullptr;
 class MQ2DanObservationType : public MQ2Type {
 private:
     
 public:
     enum Members {
-        Received
+        Received = 1
     };
 
     MQ2DanObservationType() : MQ2Type("DanObservation") {
@@ -1623,7 +1627,7 @@ public:
 
         switch ((Members)pMember->ID) {
         case Received:
-            Dest.DWord = (DWORD)pObservation->received;
+            Dest.UInt64 = pObservation->received;
             Dest.Type = pInt64Type;
             return true;
         }
@@ -1633,13 +1637,32 @@ public:
 
     bool ToString(MQ2VARPTR VarPtr, char* Destination) {
         Node::Observation *pObservation = ((Node::Observation*)VarPtr.Ptr);
-        if (!pObservation) return false;
+		if (!pObservation)
+			return false;
 
         strcpy_s(Destination, MAX_STRING, pObservation->data.c_str());
         return true;
     }
 
-    bool FromData(MQ2VARPTR &VarPtr, MQ2TYPEVAR &Source) { return false; }
+	void InitVariable(MQ2VARPTR &VarPtr) {
+		VarPtr.Ptr = malloc(sizeof(Node::Observation));
+		VarPtr.HighPart = 0;
+		ZeroMemory(VarPtr.Ptr, sizeof(Node::Observation));
+	}
+
+	void FreeVariable(MQ2VARPTR &VarPtr) {
+		free(VarPtr.Ptr);
+	}
+
+    bool FromData(MQ2VARPTR &VarPtr, MQ2TYPEVAR &Source) {
+		if (Source.Type == pDanObservationType) {
+			memcpy(VarPtr.Ptr, Source.Ptr, sizeof(Node::Observation));
+			return true;
+		}
+
+		return false;
+	}
+
     bool FromString(MQ2VARPTR &VarPtr, char* Source) { return false; }
 };
 
@@ -1656,7 +1679,7 @@ private:
 
 public:
     enum Members {
-        Name,
+        Name = 1,
         Version,
         Debug,
         LocalEcho,
@@ -1674,8 +1697,10 @@ public:
         Joined,
         O,
         Observe,
+		OReceived,
         Q,
-        Query
+        Query,
+		QReceived
     };
 
     MQ2DanNetType() : MQ2Type("DanNet") {
@@ -1697,8 +1722,10 @@ public:
         TypeMember(Joined);
         TypeMember(O);
         TypeMember(Observe);
+		TypeMember(OReceived);
         TypeMember(Q);
         TypeMember(Query);
+		TypeMember(QReceived);
     }
 
     bool GetMember(MQ2VARPTR VarPtr, char* Member, char* Index, MQ2TYPEVAR &Dest) {
@@ -1719,7 +1746,7 @@ public:
             } else {
                 strcpy_s(_buf, Node::get().name().c_str());
             }
-            Dest.Ptr = _buf;
+            Dest.Ptr = &_buf[0];
             Dest.Type = pStringType;
             return true;
         case Version:
@@ -1748,7 +1775,7 @@ public:
             return true;
         case Timeout:
             strcpy_s(_buf, ReadVar("General", "Query Timeout").c_str());
-            Dest.Ptr = _buf;
+            Dest.Ptr = &_buf[0];
             Dest.Type = pStringType;
             return true;
         case ObserveDelay:
@@ -1820,7 +1847,7 @@ public:
                 strcpy_s(_buf, CreateArray(out).c_str());
             }
 
-            Dest.Ptr = _buf;
+            Dest.Ptr = &_buf[0];
             Dest.Type = pStringType;
             return true;
         case GroupCount:
@@ -1841,7 +1868,7 @@ public:
             } else {
                 strcpy_s(_buf, CreateArray(Node::get().get_all_groups()).c_str());
             }
-            Dest.Ptr = _buf;
+            Dest.Ptr = &_buf[0];
             Dest.Type = pStringType;
             return true;
         case JoinedCount:
@@ -1862,14 +1889,23 @@ public:
             } else {
                 strcpy_s(_buf, CreateArray(Node::get().get_own_groups()).c_str());
             }
-            Dest.Ptr = _buf;
+            Dest.Ptr = &_buf[0];
             Dest.Type = pStringType;
             return true;
         case Q:
         case Query:
             _current_observation = Node::Observation(Node::get().query());
-            Dest.Ptr = &_current_observation;
-            Dest.Type = pDanObservationType;
+        
+			if (_current_observation.received != 0) {
+				Dest.Ptr = &_current_observation;
+				Dest.Type = pDanObservationType;
+				return true;
+			} else
+				return false;
+		case QReceived:
+            _current_observation = Node::Observation(Node::get().query());
+            Dest.UInt64 = _current_observation.received;
+            Dest.Type = pInt64Type;
             return true;
         }
 
@@ -1880,11 +1916,22 @@ public:
                 if (Index && Index[0] != '\0') {
                     _current_observation = Node::get().read(local_peer, Node::get().trim_query(Index));
 
-                    Dest.Ptr = &_current_observation;
-                    Dest.Type = pDanObservationType;
-                    return true;
+					if (_current_observation.received != 0) {
+						Dest.Ptr = &_current_observation;
+						Dest.Type = pDanObservationType;
+						return true;
+					} else
+						return false;
                 } else
                     return false;
+			case OReceived:
+				if (Index && Index[0] != '\0') {
+					_current_observation = Node::get().read(local_peer, Node::get().trim_query(Index));
+					Dest.UInt64 = _current_observation.received;
+					Dest.Type = pInt64Type;
+					return true;
+				} else
+					return false;
             }
         }
 
@@ -1899,7 +1946,10 @@ public:
     }
 
     bool ToString(MQ2VARPTR VarPtr, char* Destination) {
-        strcpy_s(Destination, MAX_STRING, _peer.empty() ? "NULL" : _peer.c_str());
+		if (_peer.empty())
+			return false;
+
+        strcpy_s(Destination, MAX_STRING, _peer.c_str());
         _peer.clear();
         return true;
     }
@@ -1914,8 +1964,11 @@ BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR &Dest) {
 
     if (Node::get().debugging())
         WriteChatf("MQ2DanNetType::dataDanNet Index %s", Index);
-    if (!Index || Index[0] == '\0' || !Node::get().has_peer(Index))
-        pDanNetType->SetPeer("");
+
+	if (!Index || Index[0] == '\0')
+		pDanNetType->SetPeer(Node::get().get_full_name(Node::get().name()));
+	else if (!Node::get().has_peer(Index))
+		pDanNetType->SetPeer("");
     else
         pDanNetType->SetPeer(Node::get().get_full_name(Index));
 
@@ -2212,7 +2265,7 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         PCHARINFO pChar = GetCharInfo();
         if (pChar) {
             CHAR szDelay[MAX_STRING] = { 0 };
-            strcpy_s(szDelay, (timeout + " ${DanNet[" + name + "].O[\"" + Node::get().trim_query(query) + "\"].Received}").c_str());
+            strcpy_s(szDelay, (timeout + " ${DanNet[" + name + "].OReceived[\"" + Node::get().trim_query(query) + "\"]}").c_str());
             Delay(pChar->pSpawn, szDelay);
         }
     }
@@ -2275,7 +2328,7 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         PCHARINFO pChar = GetCharInfo();
         if (pChar) {
             CHAR szDelay[MAX_STRING] = { 0 };
-            strcpy_s(szDelay, (timeout + " ${DanNet.Q.Received}").c_str());
+            strcpy_s(szDelay, (timeout + " ${DanNet.QReceived}").c_str());
             Delay(pChar->pSpawn, szDelay);
 
             Node::get().whisper<Query>(name, query);
