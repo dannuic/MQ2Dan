@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.70 -- added auto group channel join
  * dannuic: version 0.61 -- fixed stability issue with strings.
  * dannuic: version 0.60 -- fixed stability issue with TLO returning address to local.
  * dannuic: version 0.51 -- added more handlers for thread exits that are not normally handled to ensure proper shutdown.
@@ -42,7 +43,7 @@
 #include <set>
 #include <string>
 
-PLUGIN_VERSION(0.61);
+PLUGIN_VERSION(0.70);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -96,6 +97,7 @@ namespace MQ2DanNet {
         MQ2DANNET_NODE_API const std::set<std::string> get_own_groups();
         MQ2DANNET_NODE_API const std::map<std::string, std::set<std::string> > get_group_peers();
         MQ2DANNET_NODE_API const std::set<std::string> get_group_peers(const std::string& group);
+        MQ2DANNET_NODE_API const std::set<std::string> get_peer_groups(const std::string& peer);
         MQ2DANNET_NODE_API const std::string get_interfaces();
         MQ2DANNET_NODE_API const std::string get_full_name(const std::string& name);
 
@@ -264,6 +266,7 @@ namespace MQ2DanNet {
         bool _front_delimiter;
         unsigned int _observe_delay;
         unsigned int _keepalive;
+		unsigned __int64 _last_group_check;
 
         // explicitly prevent copy/move operations.
         Node(const Node&) = delete;
@@ -319,7 +322,6 @@ namespace MQ2DanNet {
             return groups.find(group) != groups.end();
         }
 
-
         // smartly reads/sets/clears _current_query
         Observation query(const std::string& output, const std::string& query);
         Observation query();
@@ -349,6 +351,9 @@ namespace MQ2DanNet {
 
         unsigned int keepalive(unsigned int keepalive) { _keepalive = keepalive; if (_actor) zstr_sendx(_actor, "KEEPALIVE", std::to_string(keepalive).c_str(), NULL); return _keepalive; }
         unsigned int keepalive() { return _keepalive; }
+
+		unsigned __int64 last_group_check(unsigned __int64 last_group_check) { _last_group_check = last_group_check; return _last_group_check; }
+		unsigned __int64 last_group_check() { return _last_group_check; }
 
         void save_channels();
 
@@ -555,6 +560,17 @@ MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_group_peers(
         peers.emplace(_node_name);
 
     return peers;
+}
+
+MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peer_groups(const std::string& peer) {
+	std::set<std::string> groups;
+
+	for (auto group_it = _peer_groups.cbegin(); group_it != _peer_groups.cend(); ++group_it) {
+		if (group_it->second.find(peer) != group_it->second.end())
+			groups.emplace(group_it->first);
+	}
+
+	return groups;
 }
 
 MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_interfaces() {
@@ -2166,6 +2182,16 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     std::string command(szLine);
 
     std::set<std::string> groups = Node::get().get_all_groups();
+	if (group == "group") {
+		auto group_it = std::find_if(groups.cbegin(), groups.cend(), [](const std::string& group) {
+			return group.find("group_") == 0;
+		});
+
+		if (group_it != groups.cend()) {
+			group = *group_it;
+		}
+	}
+
     if (groups.find(group) != groups.end()) {
         std::string::size_type n = command.find_first_not_of(" \t", 0);
         n = command.find_first_of(" \t", n);
@@ -2183,6 +2209,12 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     }
 }
 
+PLUGIN_API VOID DGGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
+	char newLine[MAX_STRING] = { 0 };
+	sprintf_s(newLine, "group %s", szLine);
+	DGexecuteCommand(pSpawn, newLine);
+}
+
 PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     CHAR szGroup[MAX_STRING] = { 0 };
     GetArg(szGroup, szLine, 1);
@@ -2190,6 +2222,16 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     std::string command(szLine);
 
     std::set<std::string> groups = Node::get().get_all_groups();
+	if (group == "group") {
+		auto group_it = std::find_if(groups.cbegin(), groups.cend(), [](const std::string& group) {
+			return group.find("group_") == 0;
+		});
+
+		if (group_it != groups.cend()) {
+			group = *group_it;
+		}
+	}
+
     if (groups.find(group) != groups.end()) {
         std::string::size_type n = command.find_first_not_of(" \t", 0);
         n = command.find_first_of(" \t", n);
@@ -2211,6 +2253,12 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         strcpy_s(szCommand, final_command.c_str());
         EzCommand(szCommand);
     }
+}
+
+PLUGIN_API VOID DGGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
+	char newLine[MAX_STRING] = { 0 };
+	sprintf_s(newLine, "group %s", szLine);
+	DGAexecuteCommand(pSpawn, newLine);
 }
 
 PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
@@ -2377,7 +2425,9 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     AddCommand("/dgtell", DGtellCommand);
     AddCommand("/dexecute", DExecuteCommand);
     AddCommand("/dgexecute", DGexecuteCommand);
+    AddCommand("/dggexecute", DGGexecuteCommand);
     AddCommand("/dgaexecute", DGAexecuteCommand);
+    AddCommand("/dggaexecute", DGGAexecuteCommand);
     AddCommand("/dobserve", DObserveCommand);
     AddCommand("/dquery", DQueryCommand);
 
@@ -2410,7 +2460,9 @@ PLUGIN_API VOID ShutdownPlugin(VOID) {
     RemoveCommand("/dgtell");
     RemoveCommand("/dexecute");
     RemoveCommand("/dgexecute");
+    RemoveCommand("/dggexecute");
     RemoveCommand("/dgaexecute");
+    RemoveCommand("/dggaexecute");
     RemoveCommand("/dobserve");
     RemoveCommand("/dquery");
 
@@ -2480,6 +2532,43 @@ PLUGIN_API VOID OnCleanUI(VOID) {
 
 // This is called every time MQ pulses
 PLUGIN_API VOID OnPulse(VOID) {
+	if (Node::get().last_group_check() + 1000 < MQGetTickCount64()) {
+		// time to check our group!
+		Node::get().last_group_check(MQGetTickCount64());
+
+		// we need to get all channels we have joined that are group channels no matter what the case
+		std::set<std::string> groups = ([]() {
+			std::set<std::string> own_groups = Node::get().get_own_groups();
+			std::set<std::string> filtered_groups;
+			std::copy_if(own_groups.cbegin(), own_groups.cend(), std::inserter(filtered_groups, filtered_groups.begin()), [](const std::string& group) {
+				return group.find("group_") == 0;
+			});
+
+			return filtered_groups;
+		})();
+
+		PCHARINFO pChar = GetCharInfo();
+		if (pChar && pChar->pGroupInfo && pChar->pGroupInfo->pLeader) {
+			// we are in a group, let's join a thing
+			char leader_name_cstr[MAX_STRING] = { 0 };
+			GetCXStr(pChar->pGroupInfo->pLeader->pName, leader_name_cstr, sizeof(leader_name_cstr));
+			std::string leader_name(Node::get().get_full_name(leader_name_cstr));
+			auto group_it = groups.find("group_" + leader_name);
+			if (group_it != groups.end()) {
+				// okay, we are already in the group we care about, but we need to leave all the other groups we don't care about.
+				groups.erase(group_it);
+			} else {
+				// we need to leave all the groups in groups, but we also need to join our new group
+				Node::get().join("group_" + leader_name);
+			}
+		}
+
+		// at this point we are guaranteed that this only has bad groups in it
+		for (auto group : groups) {
+			Node::get().leave(group);
+		}
+	}
+
     Node::get().do_next();
     Node::get().publish<Update>();
 }
