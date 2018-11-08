@@ -49,8 +49,8 @@ Examples:
 * `/dgtell <group> <text>` -- echo text on console for all peers in group
 * `/dexecute <name> <command>` -- executes a command on peer's client
 * `/dgexecute <group> <command>` -- executes a command on all clients in a group (except own)
-* `/dggexecute <group> <command>` -- executes a command on all clients in a group (except own)
-* `/dgaexecute <command>` -- executes a command on all clients in your current in-game group (including own)
+* `/dggexecute <command>` -- executes a command on all clients in your current in-game group (except own)
+* `/dgaexecute <group> <command>` -- executes a command on all clients in a group (including own)
 * `/dggaexecute <command>` -- executes a command on all clients in your current in-game group (including own)
 * `/dnet [<arg>]` -- sets some variables, gives info, check  in-game output for use
 * `/dobserve <name> [-q <query>] [-o <result>] [-drop]` -- add an observer on name and update values in result, or drop the observer
