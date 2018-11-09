@@ -50,8 +50,10 @@ Examples:
 * `/dexecute <name> <command>` -- executes a command on peer's client
 * `/dgexecute <group> <command>` -- executes a command on all clients in a group (except own)
 * `/dggexecute <command>` -- executes a command on all clients in your current in-game group (except own)
+* `/dgrexecute <command>` -- executes a command on all clients in your current in-game raid (except own)
 * `/dgaexecute <group> <command>` -- executes a command on all clients in a group (including own)
 * `/dggaexecute <command>` -- executes a command on all clients in your current in-game group (including own)
+* `/dgraexecute <command>` -- executes a command on all clients in your current in-game raid (including own)
 * `/dnet [<arg>]` -- sets some variables, gives info, check  in-game output for use
 * `/dobserve <name> [-q <query>] [-o <result>] [-drop]` -- add an observer on name and update values in result, or drop the observer
 * `/dquery <name> [-q <query>] [-o <result>] [-t <timeout>]` -- execute query on name and store return in result
