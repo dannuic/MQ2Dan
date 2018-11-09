@@ -1,5 +1,7 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.72 -- corrected detection of "all" group echos/commands
+ * dannuic: version 0.71 -- added auto raid channel join
  * dannuic: version 0.70 -- added auto group channel join
  * dannuic: version 0.61 -- fixed stability issue with strings.
  * dannuic: version 0.60 -- fixed stability issue with TLO returning address to local.
@@ -43,7 +45,7 @@
 #include <set>
 #include <string>
 
-PLUGIN_VERSION(0.70);
+PLUGIN_VERSION(0.72);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -2139,12 +2141,13 @@ PLUGIN_API VOID DGtellCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     std::string message(szLine);
 
     std::set<std::string> groups = Node::get().get_all_groups();
-    if (groups.find(group) != groups.end()) {
+	if (group.find("/") == 0) {
+		// we can assume that '/' signifies the start of a command, so we haven't specified a group
+		group = "all";
+	} else if (groups.find(group) != groups.end()) {
         std::string::size_type n = message.find_first_not_of(" \t", 0);
         n = message.find_first_of(" \t", n);
         message.erase(0, message.find_first_not_of(" \t", n));
-    } else {
-        group = "all";
     }
 
     if (group.empty() || message.empty())
@@ -2182,23 +2185,37 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     std::string command(szLine);
 
     std::set<std::string> groups = Node::get().get_all_groups();
-	if (group == "group") {
-		auto group_it = std::find_if(groups.cbegin(), groups.cend(), [](const std::string& group) {
-			return group.find("group_") == 0;
-		});
+	auto replace_qualifier = [&group, &groups, &command](const std::string& qualifier) {
+		if (group == qualifier) {
+			auto group_it = std::find_if(groups.cbegin(), groups.cend(), [&qualifier](const std::string& group_name) {
+				return group_name.find(qualifier + "_") == 0;
+			});
 
-		if (group_it != groups.cend()) {
-			group = *group_it;
+			if (group_it != groups.cend()) {
+				group = *group_it;
+			} else {
+				// we know that qualifier is the first argument, but we don't have any group that matches -- we still need to delete the argument before sending the command
+				std::string::size_type n = command.find_first_not_of(" \t", 0);
+				n = command.find_first_of(" \t", n);
+				command.erase(0, command.find_first_not_of(" \t", n));
+			}
 		}
-	}
+	};
 
-    if (groups.find(group) != groups.end()) {
+	replace_qualifier("group");
+	replace_qualifier("raid");
+
+	if (group.find("/") == 0) {
+		// we can assume that '/' signifies the start of a command, so we haven't specified a group
+		group = "all";
+	} else if (groups.find(group) != groups.end()) {
         std::string::size_type n = command.find_first_not_of(" \t", 0);
         n = command.find_first_of(" \t", n);
         command.erase(0, command.find_first_not_of(" \t", n));
     } else {
-        group = "all";
-    }
+		SyntaxError("Could not find channel %s", group.c_str());
+		return;
+	}
 
     if (group.empty() || command.empty())
         WriteChatColor("Syntax: /dgexecute <group> <command> -- direct group to execute command", USERCOLOR_DEFAULT);
@@ -2215,6 +2232,12 @@ PLUGIN_API VOID DGGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 	DGexecuteCommand(pSpawn, newLine);
 }
 
+PLUGIN_API VOID DGRexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
+	char newLine[MAX_STRING] = { 0 };
+	sprintf_s(newLine, "raid %s", szLine);
+	DGexecuteCommand(pSpawn, newLine);
+}
+
 PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     CHAR szGroup[MAX_STRING] = { 0 };
     GetArg(szGroup, szLine, 1);
@@ -2222,23 +2245,37 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     std::string command(szLine);
 
     std::set<std::string> groups = Node::get().get_all_groups();
-	if (group == "group") {
-		auto group_it = std::find_if(groups.cbegin(), groups.cend(), [](const std::string& group) {
-			return group.find("group_") == 0;
-		});
+	auto replace_qualifier = [&group, &groups, &command](const std::string& qualifier) {
+		if (group == qualifier) {
+			auto group_it = std::find_if(groups.cbegin(), groups.cend(), [&qualifier](const std::string& group_name) {
+				return group_name.find(qualifier + "_") == 0;
+			});
 
-		if (group_it != groups.cend()) {
-			group = *group_it;
+			if (group_it != groups.cend()) {
+				group = *group_it;
+			} else {
+				// we know that qualifier is the first argument, but we don't have any group that matches -- we still need to delete the argument before sending the command
+				std::string::size_type n = command.find_first_not_of(" \t", 0);
+				n = command.find_first_of(" \t", n);
+				command.erase(0, command.find_first_not_of(" \t", n));
+			}
 		}
-	}
+	};
 
-    if (groups.find(group) != groups.end()) {
+	replace_qualifier("group");
+	replace_qualifier("raid");
+
+	if (group.find("/") == 0) {
+		// we can assume that '/' signifies the start of a command, so we haven't specified a group
+		group = "all";
+	} else if (groups.find(group) != groups.end()) {
         std::string::size_type n = command.find_first_not_of(" \t", 0);
         n = command.find_first_of(" \t", n);
         command.erase(0, command.find_first_not_of(" \t", n));
-    } else {
-        group = "all";
-    }
+	} else {
+		SyntaxError("Could not find channel %s", group.c_str());
+		return;
+	}
 
     if (group.empty() || command.empty())
         WriteChatColor("Syntax: /dgaexecute <group> <command> -- direct group to execute command", USERCOLOR_DEFAULT);
@@ -2258,6 +2295,12 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 PLUGIN_API VOID DGGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 	char newLine[MAX_STRING] = { 0 };
 	sprintf_s(newLine, "group %s", szLine);
+	DGAexecuteCommand(pSpawn, newLine);
+}
+
+PLUGIN_API VOID DGRAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
+	char newLine[MAX_STRING] = { 0 };
+	sprintf_s(newLine, "raid %s", szLine);
 	DGAexecuteCommand(pSpawn, newLine);
 }
 
@@ -2426,8 +2469,10 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     AddCommand("/dexecute", DExecuteCommand);
     AddCommand("/dgexecute", DGexecuteCommand);
     AddCommand("/dggexecute", DGGexecuteCommand);
+    AddCommand("/dgrexecute", DGRexecuteCommand);
     AddCommand("/dgaexecute", DGAexecuteCommand);
     AddCommand("/dggaexecute", DGGAexecuteCommand);
+    AddCommand("/dgraexecute", DGRAexecuteCommand);
     AddCommand("/dobserve", DObserveCommand);
     AddCommand("/dquery", DQueryCommand);
 
@@ -2461,8 +2506,10 @@ PLUGIN_API VOID ShutdownPlugin(VOID) {
     RemoveCommand("/dexecute");
     RemoveCommand("/dgexecute");
     RemoveCommand("/dggexecute");
+    RemoveCommand("/dgrexecute");
     RemoveCommand("/dgaexecute");
     RemoveCommand("/dggaexecute");
+    RemoveCommand("/dgraexecute");
     RemoveCommand("/dobserve");
     RemoveCommand("/dquery");
 
@@ -2541,27 +2588,46 @@ PLUGIN_API VOID OnPulse(VOID) {
 			std::set<std::string> own_groups = Node::get().get_own_groups();
 			std::set<std::string> filtered_groups;
 			std::copy_if(own_groups.cbegin(), own_groups.cend(), std::inserter(filtered_groups, filtered_groups.begin()), [](const std::string& group) {
-				return group.find("group_") == 0;
+				return group.find("group_") == 0 || group.find("raid_") == 0;
 			});
 
 			return filtered_groups;
 		})();
 
-		PCHARINFO pChar = GetCharInfo();
-		if (pChar && pChar->pGroupInfo && pChar->pGroupInfo->pLeader) {
-			// we are in a group, let's join a thing
-			char leader_name_cstr[MAX_STRING] = { 0 };
-			GetCXStr(pChar->pGroupInfo->pLeader->pName, leader_name_cstr, sizeof(leader_name_cstr));
-			std::string leader_name(Node::get().get_full_name(leader_name_cstr));
-			auto group_it = groups.find("group_" + leader_name);
-			if (group_it != groups.end()) {
-				// okay, we are already in the group we care about, but we need to leave all the other groups we don't care about.
-				groups.erase(group_it);
-			} else {
-				// we need to leave all the groups in groups, but we also need to join our new group
-				Node::get().join("group_" + leader_name);
+		auto check_and_join = [&groups](const std::string& prefix, const std::function<bool(std::string& name)>& get_name) {
+			std::string name;
+			if (get_name(name)) {
+				name = Node::get().get_full_name(name);
+				auto group_it = groups.find(prefix + name);
+				if (group_it != groups.end()) {
+					// okay, we are already in the group we care about, but we need to leave all the other groups we don't care about.
+					groups.erase(group_it);
+				} else {
+					// we need to leave all the groups in groups, but we also need to join our new group
+					Node::get().join(prefix + name);
+				}
 			}
-		}
+		};
+
+		check_and_join("group_", [](std::string& name) {
+			PCHARINFO pChar = GetCharInfo();
+			if (pChar && pChar->pGroupInfo && pChar->pGroupInfo->pLeader) {
+				char leader_name_cstr[MAX_STRING] = { 0 };
+				GetCXStr(pChar->pGroupInfo->pLeader->pName, leader_name_cstr, sizeof(leader_name_cstr));
+				name = std::string(leader_name_cstr);
+				return true;
+			}
+
+			return false;
+		});
+
+		check_and_join("raid_", [](std::string& name) {
+			if (pRaid && pRaid->RaidLeaderName[0]) {
+				name = std::string(pRaid->RaidLeaderName);
+				return true;
+			}
+			return false;
+		});
 
 		// at this point we are guaranteed that this only has bad groups in it
 		for (auto group : groups) {
