@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.73 -- added /dnet version
  * dannuic: version 0.72 -- corrected detection of "all" group echos/commands
  * dannuic: version 0.71 -- added auto raid channel join
  * dannuic: version 0.70 -- added auto group channel join
@@ -2048,6 +2049,8 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     } else if (szParam && !strcmp(szParam, "info")) {
         WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.2f\ax", MQ2Version);
         WriteChatf("%s", Node::get().get_info().c_str());
+    } else if (szParam && !strcmp(szParam, "version")) {
+        WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.2f\ax", MQ2Version);
     } else {
         WriteChatf("\ax\atMQ2DanNet:\ax unrecognized /dnet argument \ar%s\ax. Valid arguments are: ", szParam);
         WriteChatf("           \ayinterface [<iface_name>]\ax -- force interface to iface_name");
