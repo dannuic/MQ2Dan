@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.74 -- fixed issue with auto group and auto raid with multiple groups in network
  * dannuic: version 0.73 -- added /dnet version
  * dannuic: version 0.72 -- corrected detection of "all" group echos/commands
  * dannuic: version 0.71 -- added auto raid channel join
@@ -46,7 +47,7 @@
 #include <set>
 #include <string>
 
-PLUGIN_VERSION(0.72);
+PLUGIN_VERSION(0.74);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -2187,7 +2188,7 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     auto group = Node::init_string(szGroup);
     std::string command(szLine);
 
-    std::set<std::string> groups = Node::get().get_all_groups();
+    std::set<std::string> groups = Node::get().get_own_groups();
 	auto replace_qualifier = [&group, &groups, &command](const std::string& qualifier) {
 		if (group == qualifier) {
 			auto group_it = std::find_if(groups.cbegin(), groups.cend(), [&qualifier](const std::string& group_name) {
@@ -2247,7 +2248,7 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     auto group = Node::init_string(szGroup);
     std::string command(szLine);
 
-    std::set<std::string> groups = Node::get().get_all_groups();
+    std::set<std::string> groups = Node::get().get_own_groups();
 	auto replace_qualifier = [&group, &groups, &command](const std::string& qualifier) {
 		if (group == qualifier) {
 			auto group_it = std::find_if(groups.cbegin(), groups.cend(), [&qualifier](const std::string& group_name) {
