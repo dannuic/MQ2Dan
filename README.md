@@ -101,4 +101,4 @@ Both `Observe and `Query` are their own data types, which provide a `Received` m
 
 
 ### Known Issues
-* Different network groups across PC's (specifically windows 10 with windows 7 machines) cause trouble connecting
+* Proper workgroup permissions are needed for different network groups across PC's (specifically windows 10 with windows 7 machines)
