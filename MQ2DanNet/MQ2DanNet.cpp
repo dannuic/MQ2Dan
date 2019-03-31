@@ -48,7 +48,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.74);
+PLUGIN_VERSION(0.7401);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -2204,10 +2204,10 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             SetVar("General", "Keepalive", GetDefault("Keepalive"));
         Node::get().keepalive(atoi(ReadVar("Keepalive").c_str()));
     } else if (szParam && !strcmp(szParam, "info")) {
-        WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.2f\ax", MQ2Version);
+        WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.4f\ax", MQ2Version);
         WriteChatf("%s", Node::get().get_info().c_str());
     } else if (szParam && !strcmp(szParam, "version")) {
-        WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.2f\ax", MQ2Version);
+        WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.4f\ax", MQ2Version);
     } else {
         WriteChatf("\ax\atMQ2DanNet:\ax unrecognized /dnet argument \ar%s\ax. Valid arguments are: ", szParam);
         WriteChatf("           \ayinterface [<iface_name>]\ax -- force interface to iface_name");
@@ -2641,7 +2641,7 @@ PLUGIN_API VOID InitializePlugin(VOID) {
 
     pDanObservationType = new MQ2DanObservationType;
 
-    WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.2f\ax", MQ2Version);
+    WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.4f\ax", MQ2Version);
 }
 
 // Called once, when the plugin is to shutdown
