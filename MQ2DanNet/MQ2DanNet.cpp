@@ -1,5 +1,7 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7402 -- added some null checks to guard against crashes during crashes
+ * dannuic: version 0.7401 -- test branch to add mutex operations for all shared resources
  * dannuic: version 0.74 -- fixed issue with auto group and auto raid with multiple groups in network 
  * dannuic: version 0.73 -- added /dnet version
  * dannuic: version 0.72 -- corrected detection of "all" group echos/commands
@@ -48,7 +50,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7401);
+PLUGIN_VERSION(0.7402);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -830,7 +832,10 @@ void Node::node_actor(zsock_t *pipe, void *args) {
 
         bool did_expire = zpoller_expired(poller);
         bool did_terminate = zpoller_terminated(poller);
-        if (which == pipe) {
+
+		if (!which || !pipe || !node || !node->_node) {
+			terminated = true;
+		} else if (which == pipe) {
             // we've got a command from the caller here
             //DebugSpewAlways("Got message from caller");
             zmsg_t *msg = zmsg_recv(which);
