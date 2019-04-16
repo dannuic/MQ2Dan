@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.75 -- merged mutex branch into master
  * dannuic: version 0.7402 -- added some null checks to guard against crashes during crashes
  * dannuic: version 0.7401 -- test branch to add mutex operations for all shared resources
  * dannuic: version 0.74 -- fixed issue with auto group and auto raid with multiple groups in network 
@@ -50,7 +51,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7402);
+PLUGIN_VERSION(0.75);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
