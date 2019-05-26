@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7501 -- stability fix
  * dannuic: version 0.75 -- merged mutex branch into master
  * dannuic: version 0.7402 -- added some null checks to guard against crashes during crashes
  * dannuic: version 0.7401 -- test branch to add mutex operations for all shared resources
@@ -51,7 +52,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.75);
+PLUGIN_VERSION(0.7501);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -992,15 +993,19 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 char *name = zmsg_popstr(msg);
                 char *group = zmsg_popstr(msg);
 
-                std::stringstream args;
-                Archive<std::stringstream> args_ar(args);
-                args_ar << std::string(name ? name : "") << std::string(group ? group : "");
-                char *body_data = (char *)zframe_data(body);
-                size_t body_size = zframe_size(body);
+				if (body) {
+					std::stringstream args;
+					Archive<std::stringstream> args_ar(args);
+					args_ar << std::string(name ? name : "") << std::string(group ? group : "");
+					char *body_data = (char *)zframe_data(body);
+					size_t body_size = zframe_size(body);
 
-                args.write(body_data, body_size);
+					args.write(body_data, body_size);
 
-                node->queue_command(command, std::move(args));
+					node->queue_command(command, std::move(args));
+				} else {
+					DebugSpewAlways("MQ2DanNet: Empty %s message in pipe handler: group %s, name %s, body %s.", command, group, name, body);
+				}
 
                 if (group) zstr_free(&group);
                 if (name) zstr_free(&name);
