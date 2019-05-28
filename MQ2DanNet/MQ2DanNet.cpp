@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7502 -- allowed /dge in not-joined channels and added color parsing to tells
  * dannuic: version 0.7501 -- stability fix
  * dannuic: version 0.75 -- merged mutex branch into master
  * dannuic: version 0.7402 -- added some null checks to guard against crashes during crashes
@@ -52,7 +53,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7501);
+PLUGIN_VERSION(0.7502);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -2162,6 +2163,30 @@ BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR &Dest) {
     return true;
 }
 
+std::string unescape_string(const std::string& input) {
+	char szOut[MAX_STRING] = { 0 };
+	for (int old_pos = 0, new_pos = 0; old_pos < input.length(); ++old_pos, szOut[++new_pos] = 0) {
+		if (input.at(old_pos) == '\\') {
+			++old_pos;
+			if (input.at(old_pos)) {
+				if (input.at(old_pos) == '\\')
+					szOut[new_pos] = input.at(old_pos);
+				else if (input.at(old_pos) == 'n') {
+					szOut[new_pos++] = '\r';
+					szOut[new_pos] = '\n';
+				} else if (input.at(old_pos) >= 'a' && input.at(old_pos) <= 'z')
+					szOut[new_pos] = input.at(old_pos) - 'a' + 7;
+				else if (input.at(old_pos) >= 'A' && input.at(old_pos) <= 'Z')
+					szOut[new_pos] = input.at(old_pos) - 'a' + 7;
+			}
+		} else {
+			szOut[new_pos] = input.at(old_pos);
+		}
+	}
+
+	return std::string(szOut);
+}
+
 PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     CHAR szParam[MAX_STRING] = { 0 };
     GetArg(szParam, szLine, 1);
@@ -2300,8 +2325,9 @@ PLUGIN_API VOID DTellCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     else {
         name = Node::get().get_full_name(name);
 
-        WriteChatf("\ax\a-t[ \ax\at-->\ax\a-t(%s) ]\ax \aw%s\ax", name.c_str(), message.c_str());
-        Node::get().whisper<MQ2DanNet::Echo>(name, message);
+		std::string unescaped_message = unescape_string(message);
+        WriteChatf("\ax\a-t[ \ax\at-->\ax\a-t(%s) ]\ax \aw%s\ax", name.c_str(), unescaped_message.c_str());
+        Node::get().whisper<MQ2DanNet::Echo>(name, unescaped_message);
     }
 }
 
@@ -2312,20 +2338,21 @@ PLUGIN_API VOID DGtellCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     std::string message(szLine);
 
     std::set<std::string> groups = Node::get().get_all_groups();
-	if (group.find("/") == 0) {
-		// we can assume that '/' signifies the start of a command, so we haven't specified a group
-		group = "all";
-	} else if (groups.find(group) != groups.end()) {
+	if (groups.find(group) != groups.end()) {
         std::string::size_type n = message.find_first_not_of(" \t", 0);
         n = message.find_first_of(" \t", n);
         message.erase(0, message.find_first_not_of(" \t", n));
-    }
+	} else {
+		// let's assume that if we can't find the group, we just meant all
+		group = "all";
+	}
 
     if (group.empty() || message.empty())
         WriteChatColor("Syntax: /dgtell <group> <message> -- broadcast message to group", USERCOLOR_DEFAULT);
     else {
-        WriteChatf("\ax\a-t[\ax\at -->\ax\a-t(%s) ]\ax \aw%s\ax", group.c_str(), message.c_str());
-        Node::get().shout<MQ2DanNet::Echo>(group, message);
+		std::string unescaped_message = unescape_string(message);
+        WriteChatf("\ax\a-t[\ax\at -->\ax\a-t(%s) ]\ax \aw%s\ax", group.c_str(), unescaped_message.c_str());
+        Node::get().shout<MQ2DanNet::Echo>(group, unescaped_message);
     }
 }
 
@@ -2355,7 +2382,7 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     auto group = Node::init_string(szGroup);
     std::string command(szLine);
 
-    std::set<std::string> groups = Node::get().get_own_groups();
+    std::set<std::string> groups = Node::get().get_all_groups();
 	auto replace_qualifier = [&group, &groups, &command](const std::string& qualifier) {
 		if (group == qualifier) {
 			auto group_it = std::find_if(groups.cbegin(), groups.cend(), [&qualifier](const std::string& group_name) {
