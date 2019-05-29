@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7503 -- fixed group and raid bugs
  * dannuic: version 0.7502 -- allowed /dge in not-joined channels and added color parsing to tells
  * dannuic: version 0.7501 -- stability fix
  * dannuic: version 0.75 -- merged mutex branch into master
@@ -53,7 +54,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7502);
+PLUGIN_VERSION(0.7503);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -2241,7 +2242,7 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         Node::get().keepalive(atoi(ReadVar("Keepalive").c_str()));
     } else if (szParam && !strcmp(szParam, "info")) {
         WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.4f\ax", MQ2Version);
-        WriteChatf("%s", Node::get().get_info().c_str());
+        WriteChatf("%s", Node::get().get_info().c_str()); // TODO: need to chunk this output up because it runs into the 2048 character limit
     } else if (szParam && !strcmp(szParam, "version")) {
         WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.4f\ax", MQ2Version);
     } else {
@@ -2382,9 +2383,9 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     auto group = Node::init_string(szGroup);
     std::string command(szLine);
 
-    std::set<std::string> groups = Node::get().get_all_groups();
-	auto replace_qualifier = [&group, &groups, &command](const std::string& qualifier) {
+	auto replace_qualifier = [&group, &command](const std::string& qualifier) {
 		if (group == qualifier) {
+			std::set<std::string> groups = Node::get().get_own_groups();
 			auto group_it = std::find_if(groups.cbegin(), groups.cend(), [&qualifier](const std::string& group_name) {
 				return group_name.find(qualifier + "_") == 0;
 			});
@@ -2403,6 +2404,7 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 	replace_qualifier("group");
 	replace_qualifier("raid");
 
+    std::set<std::string> groups = Node::get().get_all_groups();
 	if (group.find("/") == 0) {
 		// we can assume that '/' signifies the start of a command, so we haven't specified a group
 		group = "all";
@@ -2442,9 +2444,9 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     auto group = Node::init_string(szGroup);
     std::string command(szLine);
 
-    std::set<std::string> groups = Node::get().get_own_groups();
-	auto replace_qualifier = [&group, &groups, &command](const std::string& qualifier) {
+	auto replace_qualifier = [&group, &command](const std::string& qualifier) {
 		if (group == qualifier) {
+			std::set<std::string> groups = Node::get().get_own_groups();
 			auto group_it = std::find_if(groups.cbegin(), groups.cend(), [&qualifier](const std::string& group_name) {
 				return group_name.find(qualifier + "_") == 0;
 			});
@@ -2463,6 +2465,7 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 	replace_qualifier("group");
 	replace_qualifier("raid");
 
+    std::set<std::string> groups = Node::get().get_all_groups();
 	if (group.find("/") == 0) {
 		// we can assume that '/' signifies the start of a command, so we haven't specified a group
 		group = "all";
