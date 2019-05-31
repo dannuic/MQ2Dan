@@ -15,16 +15,15 @@
 There are 2 basic uses
 1. Set up an observer
   * Methods of setting up an observer
-    * `/dobserve <name> <query>`
-    * `${DanNet[<name>].Observe[<query>]}` or `${DanNet[<name>].O[<query>]}`
+    * `/dobserve <name> -q <query> -o <outvar>`
   * Reading an observer's data: `${DanNet[<name>].Observe[<query>]}` or `${DanNet[<name>].O[<query>]}`
   * Dropping an observer: `/dobserve <name> <query> drop`
 2. Single-use direct query
   * Submitting a query: `/dquery <name> [-q <query>] [-o <result>] [-t <timeout>]`
     * Combines `/delay` with `/varset`
     * `timeout` is optional, and the default can be configured
-    * `result` is optional, will just write out the result if omitted
-    * If not run in a macro, ignores `result` and just writes out
+    * `result` is optional, will just write out the result to `${DanNet.Q}` or `${DanNet.Query}` if omitted
+    * If not run in a macro, ignores `result` and just writes out to the TLO
     
 
 ### Queries
@@ -51,9 +50,11 @@ Examples:
 * `/dgexecute <group> <command>` -- executes a command on all clients in a group (except own)
 * `/dggexecute <command>` -- executes a command on all clients in your current in-game group (except own)
 * `/dgrexecute <command>` -- executes a command on all clients in your current in-game raid (except own)
+* `/dgzexecute <command>` -- executes a command on all clients in your current in-game zone (except own)
 * `/dgaexecute <group> <command>` -- executes a command on all clients in a group (including own)
 * `/dggaexecute <command>` -- executes a command on all clients in your current in-game group (including own)
 * `/dgraexecute <command>` -- executes a command on all clients in your current in-game raid (including own)
+* `/dgzaexecute <command>` -- executes a command on all clients in your current in-game zone (including own)
 * `/dnet [<arg>]` -- sets some variables, gives info, check  in-game output for use
 * `/dobserve <name> [-q <query>] [-o <result>] [-drop]` -- add an observer on name and update values in result, or drop the observer
 * `/dquery <name> [-q <query>] [-o <result>] [-t <timeout>]` -- execute query on name and store return in result
@@ -61,6 +62,7 @@ Examples:
 
 ### TLO Members
 * `Name` -- current node name (fully qualified)
+* `Version` -- current build version
 * `Debug` -- debugging flag
 * `LocalEcho` -- local echo flag (outgoing echo)
 * `CommandEcho` -- command echo (incoming commands)
