@@ -15,11 +15,12 @@
 There are 2 basic uses
 1. Set up an observer
   * Methods of setting up an observer
-    * `/dobserve <name> -q <query> -o <outvar>`
+    * `/dobserve <name> -q <query> [-o <result>]`
   * Reading an observer's data: `${DanNet[<name>].Observe[<query>]}` or `${DanNet[<name>].O[<query>]}`
-  * Dropping an observer: `/dobserve <name> <query> drop`
+  * Dropping an observer: `/dobserve <name> -q <query> -drop`
+  * `result` is optional if no out variable is needed (or not executing from a macro)
 2. Single-use direct query
-  * Submitting a query: `/dquery <name> [-q <query>] [-o <result>] [-t <timeout>]`
+  * Submitting a query: `/dquery <name> -q <query> [-o <result>] [-t <timeout>]`
     * Combines `/delay` with `/varset`
     * `timeout` is optional, and the default can be configured
     * `result` is optional, will just write out the result to `${DanNet.Q}` or `${DanNet.Query}` if omitted
