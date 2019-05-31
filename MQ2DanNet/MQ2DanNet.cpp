@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7504 -- added zone channel, fixed Version TLO, expanded full names boolean
  * dannuic: version 0.7503 -- fixed group and raid bugs
  * dannuic: version 0.7502 -- allowed /dge in not-joined channels and added color parsing to tells
  * dannuic: version 0.7501 -- stability fix
@@ -54,7 +55,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7503);
+PLUGIN_VERSION(0.7504);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -102,7 +103,7 @@ namespace MQ2DanNet {
             publish(group, name<T>(), std::move(arg_stream));
         }
 
-        MQ2DANNET_NODE_API const std::string get_info();
+        MQ2DANNET_NODE_API const std::list<std::string> get_info();
         MQ2DANNET_NODE_API const std::set<std::string> get_peers();
         MQ2DANNET_NODE_API const std::set<std::string> get_all_groups();
         MQ2DANNET_NODE_API const std::set<std::string> get_own_groups();
@@ -111,6 +112,8 @@ namespace MQ2DanNet {
         MQ2DANNET_NODE_API const std::set<std::string> get_peer_groups(const std::string& peer);
         MQ2DANNET_NODE_API const std::string get_interfaces();
         MQ2DANNET_NODE_API const std::string get_full_name(const std::string& name);
+		MQ2DANNET_NODE_API const std::string get_short_name(const std::string& name);
+		MQ2DANNET_NODE_API const std::string get_name(const std::string& name);
 
         // quick helper function to safely init strings from chars
         MQ2DANNET_NODE_API static std::string init_string(const char *szStr);
@@ -685,40 +688,41 @@ MQ2DANNET_NODE_API void Node::respond(const std::string& name, const std::string
     delete[] args_buf;
 }
 
-MQ2DANNET_NODE_API const std::string Node::get_info() {
+MQ2DANNET_NODE_API const std::list<std::string> Node::get_info() {
     if (!_actor)
-        return "NONET";
+		return std::list<std::string> { "NONET" };
 
-    std::stringstream output;
+	std::list<std::string> output;
     std::set<std::string> groups = get_own_groups();
-    output << "CHANNELS: ";
+    output.push_back("CHANNELS: ");
     auto group_peers = get_group_peers();
     for (auto group : group_peers) {
         // this is our "observer" group filter
         if (group.first.find_first_of('_') != std::string::npos && std::isdigit(group.first.back()))
             continue;
 
+		std::stringstream output_stream;
+
         if (groups.find(group.first) != groups.end()) {
-            output << std::endl << " :: \ax\ag" << group.first << "\ax" << std::endl;
+			output_stream << " :: \ax\ag" << group.first << "\ax" << std::endl;
         } else {
-            output << std::endl << " :: \ax\a-g" << group.first << "\ax" << std::endl;
+			output_stream << " :: \ax\a-g" << group.first << "\ax" << std::endl;
         }
 
         for (auto peer : group.second) {
             if (_node_name == peer)
-                output << "\ax\aw";
+                output_stream << "\ax\aw";
             else
-                output << "\ax\a-w";
+                output_stream << "\ax\a-w";
 
-            std::string peer_out = peer;
-            if (!full_names() && peer_out.find_first_of("_") != std::string::npos && peer_out.find_first_of(EQADDR_SERVERNAME) != std::string::npos)
-                peer_out = peer_out.substr(peer_out.find_first_of("_") + 1);
-
-            output << peer_out << "\ax ";
+            std::string peer_out = get_name(peer);
+            output_stream << peer_out << "\ax ";
         }
+
+		output.push_back(output_stream.str());
     }
 
-    return output.str();
+	return output;
 }
 
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peers() {
@@ -792,8 +796,26 @@ MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_full_name(const std::s
         ret = EQADDR_SERVERNAME + std::string("_") + ret;
     }
 
-    std::transform(ret.begin(), ret.end(), ret.begin(), ::tolower);
     return init_string(ret.c_str());
+}
+
+MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_short_name(const std::string& name) {
+	std::string ret = name;
+	size_t pos = name.find_last_of("_");
+
+	if (pos != std::string::npos && name.find_first_of(EQADDR_SERVERNAME) != std::string::npos) {
+		ret = name.substr(pos + 1);
+	}
+
+	return init_string(ret.c_str());
+}
+
+MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_name(const std::string& name) {
+	if (full_names()) {
+		return get_full_name(name);
+	} else {
+		return get_short_name(name);
+	}
 }
 
 void Node::node_actor(zsock_t *pipe, void *args) {
@@ -1405,6 +1427,7 @@ const bool MQ2DanNet::Echo::callback(std::stringstream&& args) {
 
     try {
         received >> from >> group >> text;
+		from = Node::get().get_name(from);
         DebugSpewAlways("ECHO --> FROM: %s, GROUP: %s, TEXT: %s", from.c_str(), group.c_str(), text.c_str());
 
         if (group.empty())
@@ -1928,19 +1951,14 @@ public:
 
         switch ((Members)pMember->ID) {
         case Name:
-            if (!Node::get().full_names()) {
-                std::string out = Node::get().name();
-                out = out.substr(out.find_first_of("_") + 1);
-                strcpy_s(_buf, out.c_str());
-            } else {
-                strcpy_s(_buf, Node::get().name().c_str());
-            }
+			strcpy_s(_buf, Node::get().get_name(Node::get().name()).c_str());
             Dest.Ptr = &_buf[0];
             Dest.Type = pStringType;
             return true;
         case Version:
-            Dest.Float = MQ2Version;
-            Dest.Type = pFloatType;
+			sprintf_s(_buf, "%1.4f", MQ2Version);
+			Dest.Ptr = &_buf[0];
+			Dest.Type = pStringType;
             return true;
         case Debug:
             Dest.DWord = Node::get().debugging();
@@ -2000,9 +2018,7 @@ public:
                 auto peer_it = _peers.cbegin();
                 std::advance(peer_it, idx);
                 if (peer_it != _peers.cend()) {
-                    std::string out = *peer_it;
-                    if (!Node::get().full_names() && out.find_first_of("_") != std::string::npos && out.find_first_of(EQADDR_SERVERNAME) != std::string::npos) 
-                        out = out.substr(out.find_first_of("_") + 1);
+                    std::string out = Node::get().get_name(*peer_it);
                     strcpy_s(_buf, out.c_str());
                 }  else
                     return false;
@@ -2013,10 +2029,7 @@ public:
                     out = peers;
                 else {
                     std::transform(peers.cbegin(), peers.cend(), std::inserter(out, out.begin()), [](std::string s) -> std::string {
-                        if (s.find_first_of("_") != std::string::npos && s.find_first_of(EQADDR_SERVERNAME) != std::string::npos) {
-                            return s.substr(s.find_first_of("_") + 1);
-                        } else
-                            return s;
+						return Node::get().get_short_name(s);
                     });
                 }
                 strcpy_s(_buf, CreateArray(out).c_str());
@@ -2027,10 +2040,7 @@ public:
                     out = peers;
                 else {
                     std::transform(peers.cbegin(), peers.cend(), std::inserter(out, out.begin()), [](std::string s) -> std::string {
-                        if (s.find_first_of("_") != std::string::npos && s.find_first_of(EQADDR_SERVERNAME) != std::string::npos) {
-                            return s.substr(s.find_first_of("_") + 1);
-                        } else
-                            return s;
+						return Node::get().get_short_name(s);
                     });
                 }
                 strcpy_s(_buf, CreateArray(out).c_str());
@@ -2166,7 +2176,7 @@ BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR &Dest) {
 
 std::string unescape_string(const std::string& input) {
 	char szOut[MAX_STRING] = { 0 };
-	for (int old_pos = 0, new_pos = 0; old_pos < input.length(); ++old_pos, szOut[++new_pos] = 0) {
+	for (size_t old_pos = 0, new_pos = 0; old_pos < input.length(); ++old_pos, szOut[++new_pos] = 0) {
 		if (input.at(old_pos) == '\\') {
 			++old_pos;
 			if (input.at(old_pos)) {
@@ -2242,7 +2252,9 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         Node::get().keepalive(atoi(ReadVar("Keepalive").c_str()));
     } else if (szParam && !strcmp(szParam, "info")) {
         WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.4f\ax", MQ2Version);
-        WriteChatf("%s", Node::get().get_info().c_str()); // TODO: need to chunk this output up because it runs into the 2048 character limit
+		for (std::string info : Node::get().get_info()) {
+			WriteChatf("%s", info.c_str());
+		}
     } else if (szParam && !strcmp(szParam, "version")) {
         WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.4f\ax", MQ2Version);
     } else {
@@ -2324,7 +2336,7 @@ PLUGIN_API VOID DTellCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     if (name.empty() || message.empty())
         WriteChatColor("Syntax: /dtell <name> <message> -- send message to name", USERCOLOR_DEFAULT);
     else {
-        name = Node::get().get_full_name(name);
+        name = Node::get().get_name(name);
 
 		std::string unescaped_message = unescape_string(message);
         WriteChatf("\ax\a-t[ \ax\at-->\ax\a-t(%s) ]\ax \aw%s\ax", name.c_str(), unescaped_message.c_str());
@@ -2369,7 +2381,7 @@ PLUGIN_API VOID DExecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     if (name.empty() || command.empty())
         WriteChatColor("Syntax: /dexecute <name> <command> -- direct name to execute command", USERCOLOR_DEFAULT);
     else {
-        name = Node::get().get_full_name(name);
+        name = Node::get().get_name(name);
 
         if (Node::get().local_echo())
             WriteChatf("\ax\a-o[ \ax\ao-->\ax\a-o(%s) ]\ax \aw%s\ax", name.c_str(), command.c_str());
@@ -2403,6 +2415,7 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 
 	replace_qualifier("group");
 	replace_qualifier("raid");
+	replace_qualifier("zone");
 
     std::set<std::string> groups = Node::get().get_all_groups();
 	if (group.find("/") == 0) {
@@ -2438,6 +2451,12 @@ PLUGIN_API VOID DGRexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 	DGexecuteCommand(pSpawn, newLine);
 }
 
+PLUGIN_API VOID DGZexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
+	char newLine[MAX_STRING] = { 0 };
+	sprintf_s(newLine, "zone %s", szLine);
+	DGexecuteCommand(pSpawn, newLine);
+}
+
 PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     CHAR szGroup[MAX_STRING] = { 0 };
     GetArg(szGroup, szLine, 1);
@@ -2464,6 +2483,7 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 
 	replace_qualifier("group");
 	replace_qualifier("raid");
+	replace_qualifier("zone");
 
     std::set<std::string> groups = Node::get().get_all_groups();
 	if (group.find("/") == 0) {
@@ -2502,6 +2522,12 @@ PLUGIN_API VOID DGGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 PLUGIN_API VOID DGRAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 	char newLine[MAX_STRING] = { 0 };
 	sprintf_s(newLine, "raid %s", szLine);
+	DGAexecuteCommand(pSpawn, newLine);
+}
+
+PLUGIN_API VOID DGZAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
+	char newLine[MAX_STRING] = { 0 };
+	sprintf_s(newLine, "zone %s", szLine);
 	DGAexecuteCommand(pSpawn, newLine);
 }
 
@@ -2671,9 +2697,11 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     AddCommand("/dgexecute", DGexecuteCommand);
     AddCommand("/dggexecute", DGGexecuteCommand);
     AddCommand("/dgrexecute", DGRexecuteCommand);
+	AddCommand("/dgzexecute", DGZexecuteCommand);
     AddCommand("/dgaexecute", DGAexecuteCommand);
     AddCommand("/dggaexecute", DGGAexecuteCommand);
     AddCommand("/dgraexecute", DGRAexecuteCommand);
+    AddCommand("/dgzaexecute", DGZAexecuteCommand);
     AddCommand("/dobserve", DObserveCommand);
     AddCommand("/dquery", DQueryCommand);
 
@@ -2708,9 +2736,11 @@ PLUGIN_API VOID ShutdownPlugin(VOID) {
     RemoveCommand("/dgexecute");
     RemoveCommand("/dggexecute");
     RemoveCommand("/dgrexecute");
+    RemoveCommand("/dgzexecute");
     RemoveCommand("/dgaexecute");
     RemoveCommand("/dggaexecute");
     RemoveCommand("/dgraexecute");
+    RemoveCommand("/dgzaexecute");
     RemoveCommand("/dobserve");
     RemoveCommand("/dquery");
 
@@ -2789,7 +2819,7 @@ PLUGIN_API VOID OnPulse(VOID) {
 			std::set<std::string> own_groups = Node::get().get_own_groups();
 			std::set<std::string> filtered_groups;
 			std::copy_if(own_groups.cbegin(), own_groups.cend(), std::inserter(filtered_groups, filtered_groups.begin()), [](const std::string& group) {
-				return group.find("group_") == 0 || group.find("raid_") == 0;
+				return group.find("group_") == 0 || group.find("raid_") == 0 || group.find("zone_") == 0;
 			});
 
 			return filtered_groups;
@@ -2827,6 +2857,16 @@ PLUGIN_API VOID OnPulse(VOID) {
 				name = std::string(pRaid->RaidLeaderName);
 				return true;
 			}
+			return false;
+		});
+
+		check_and_join("zone_", [](std::string& name) {
+			PZONEINFO pZone = reinterpret_cast<PZONEINFO>(pZoneInfo);
+			if (pZone) {
+				name = std::string(pZone->ShortName);
+				return true;
+			}
+
 			return false;
 		});
 
