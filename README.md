@@ -61,6 +61,35 @@ Examples:
 * `/dquery <name> [-q <query>] [-o <result>] [-t <timeout>]` -- execute query on name and store return in result
 
 
+### EQBC -> DanNet Cheat Sheet
+
+#### Channels vs Groups
+
+* `/bccmd channels group1 tanks raid1` -- requires the full list of channels any time you want to join a new channel.
+  * `/djoin group1 save` -- join group1 group, store settings in MQ2DanNet.ini under `[server_character]`.  Character will automatically join this group for future sessions.
+  * `/djoin tanks save` -- join tanks group, store settings in MQ2DanNet.ini under `[server_character]`.  Character will automatically join this group for future sessions.
+  * `/dleave tanks save` -- leave raid1 group, save settings in MQ2DanNet.ini under `[server_character]`.  Character will NOT automatically join this group for future sessions.
+
+Rather than adding peers to a group manually, you can use existing commands to add a temporary in-game group/raid setup to a new DanNet group -
+
+* `/dgga /djoin mytempgroup` -- join all peers in your current in-game group (including own) to the `mytempgroup` group.  Adding `save` will store and automatically join this group for future use.
+* `/dgra /djoin mytempraid` -- join all peers in your current in-game group (including own) to the `mytempraid` group.  Adding `save` will store and automatically join this group for future use.
+
+#### Echos
+
+* `/bct <name> //echo something cool` -- `/dt <name> something cool`
+* `/bct <channel> //echo something cool` -- `/dgt <group> something cool`
+
+#### Commands
+
+* `/bct <name> //command` -- `/dex <name> /command`
+* `/bct <channel> //command` -- `/dge <group> /command`
+* `/bcg //command` -- `/dgge /command`
+* `/bcga //command` -- `/dgga /command`
+* `/bcz //command` (requires netbots) -- `/dgze /command` (does NOT require netbots)
+* `/bcza //command` (requires netbots) -- `/dgza /command` (does NOT require netbots)
+
+
 ### TLO Members
 * `Name` -- current node name (fully qualified)
 * `Version` -- current build version
@@ -74,6 +103,8 @@ Examples:
 * `Keepalive` -- keepalive time for non-responding peers (in ms)
 * `PeerCount` -- number of connected peers
 * `Peers` -- list of connected peers
+  * `${DanNet.Peers}` -- all connected oeers
+  * `${DanNet.Peers[${GroupName}]}` -- all peers in the ${GroupName} group
 * `GroupCount` -- number of all groups
 * `Groups` -- list of all groups
 * `JoinedCount` -- number of joined groups
