@@ -68,7 +68,7 @@ Examples:
 * `/bccmd channels group1 tanks raid1` -- requires the full list of channels any time you want to join a new channel.
   * `/djoin group1 save` -- join group1 group, store settings in MQ2DanNet.ini under `[server_character]`.  Character will automatically join this group for future sessions.
   * `/djoin tanks save` -- join tanks group, store settings in MQ2DanNet.ini under `[server_character]`.  Character will automatically join this group for future sessions.
-  * `/dleave tanks save` -- leave raid1 group, save settings in MQ2DanNet.ini under `[server_character]`.  Character will NOT automatically join this group for future sessions.
+  * `/dleave raid1 save` -- leave raid1 group, save settings in MQ2DanNet.ini under `[server_character]`.  Character will NOT automatically join this group for future sessions.
 
 Rather than adding peers to a group manually, you can use existing commands to add a temporary in-game group/raid setup to a new DanNet group -
 
