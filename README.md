@@ -15,16 +15,16 @@
 There are 2 basic uses
 1. Set up an observer
   * Methods of setting up an observer
-    * `/dobserve <name> <query>`
-    * `${DanNet[<name>].Observe[<query>]}` or `${DanNet[<name>].O[<query>]}`
+    * `/dobserve <name> -q <query> [-o <result>]`
   * Reading an observer's data: `${DanNet[<name>].Observe[<query>]}` or `${DanNet[<name>].O[<query>]}`
-  * Dropping an observer: `/dobserve <name> <query> drop`
+  * Dropping an observer: `/dobserve <name> -q <query> -drop`
+  * `result` is optional if no out variable is needed (or not executing from a macro)
 2. Single-use direct query
-  * Submitting a query: `/dquery <name> [-q <query>] [-o <result>] [-t <timeout>]`
+  * Submitting a query: `/dquery <name> -q <query> [-o <result>] [-t <timeout>]`
     * Combines `/delay` with `/varset`
     * `timeout` is optional, and the default can be configured
-    * `result` is optional, will just write out the result if omitted
-    * If not run in a macro, ignores `result` and just writes out
+    * `result` is optional, will just write out the result to `${DanNet.Q}` or `${DanNet.Query}` if omitted
+    * If not run in a macro, ignores `result` and just writes out to the TLO
     
 
 ### Queries
@@ -51,16 +51,48 @@ Examples:
 * `/dgexecute <group> <command>` -- executes a command on all clients in a group (except own)
 * `/dggexecute <command>` -- executes a command on all clients in your current in-game group (except own)
 * `/dgrexecute <command>` -- executes a command on all clients in your current in-game raid (except own)
+* `/dgzexecute <command>` -- executes a command on all clients in your current in-game zone (except own)
 * `/dgaexecute <group> <command>` -- executes a command on all clients in a group (including own)
 * `/dggaexecute <command>` -- executes a command on all clients in your current in-game group (including own)
 * `/dgraexecute <command>` -- executes a command on all clients in your current in-game raid (including own)
+* `/dgzaexecute <command>` -- executes a command on all clients in your current in-game zone (including own)
 * `/dnet [<arg>]` -- sets some variables, gives info, check  in-game output for use
 * `/dobserve <name> [-q <query>] [-o <result>] [-drop]` -- add an observer on name and update values in result, or drop the observer
 * `/dquery <name> [-q <query>] [-o <result>] [-t <timeout>]` -- execute query on name and store return in result
 
 
+### EQBC -> DanNet Cheat Sheet
+
+#### Channels vs Groups
+
+* `/bccmd channels group1 tanks raid1` -- requires the full list of channels any time you want to join a new channel.
+  * `/djoin group1 save` -- join group1 group, store settings in MQ2DanNet.ini under `[server_character]`.  Character will automatically join this group for future sessions.
+  * `/djoin tanks save` -- join tanks group, store settings in MQ2DanNet.ini under `[server_character]`.  Character will automatically join this group for future sessions.
+  * `/dleave raid1 save` -- leave raid1 group, save settings in MQ2DanNet.ini under `[server_character]`.  Character will NOT automatically join this group for future sessions.
+
+Rather than adding peers to a group manually, you can use existing commands to add a temporary in-game group/raid setup to a new DanNet group -
+
+* `/dgga /djoin mytempgroup` -- join all peers in your current in-game group (including own) to the `mytempgroup` group.  Adding `save` will store and automatically join this group for future use.
+* `/dgra /djoin mytempraid` -- join all peers in your current in-game group (including own) to the `mytempraid` group.  Adding `save` will store and automatically join this group for future use.
+
+#### Echos
+
+* `/bct <name> //echo something cool` -- `/dt <name> something cool`
+* `/bct <channel> //echo something cool` -- `/dgt <group> something cool`
+
+#### Commands
+
+* `/bct <name> //command` -- `/dex <name> /command`
+* `/bct <channel> //command` -- `/dge <group> /command`
+* `/bcg //command` -- `/dgge /command`
+* `/bcga //command` -- `/dgga /command`
+* `/bcz //command` (requires netbots) -- `/dgze /command` (does NOT require netbots)
+* `/bcza //command` (requires netbots) -- `/dgza /command` (does NOT require netbots)
+
+
 ### TLO Members
 * `Name` -- current node name (fully qualified)
+* `Version` -- current build version
 * `Debug` -- debugging flag
 * `LocalEcho` -- local echo flag (outgoing echo)
 * `CommandEcho` -- command echo (incoming commands)
@@ -71,6 +103,8 @@ Examples:
 * `Keepalive` -- keepalive time for non-responding peers (in ms)
 * `PeerCount` -- number of connected peers
 * `Peers` -- list of connected peers
+  * `${DanNet.Peers}` -- all connected oeers
+  * `${DanNet.Peers[${GroupName}]}` -- all peers in the ${GroupName} group
 * `GroupCount` -- number of all groups
 * `Groups` -- list of all groups
 * `JoinedCount` -- number of joined groups
