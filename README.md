@@ -110,6 +110,12 @@ Rather than adding peers to a group manually, you can use existing commands to a
 * `JoinedCount` -- number of joined groups
 * `Joined` -- list of joined groups
 * `O` `Observe` -- observe accessor, accessed like: `${DanNet[peer_name].Observe[query]}`
+  * if no indices are specified, lists all queries observers have registered
+  * if only the query is specified, list all peers that have registered that query as an observer on self
+  * if only the peer is specified, list all queries that self has registered on peer
+  * if fully specified, attempt to retrieve the data specified on the remote peer
+* `OCount` `ObserveCount` -- count observed data on peer, or count observers on self if no peer is specified
+* `OSet` `ObserveSet` -- determine if query has been set as observed data on peer, or as an observer on self if no peer specified
 * `Q` `Query` -- query accessor, for last executed query
 
 Both `Observe and `Query` are their own data types, which provide a `Received` member to determine the last received timestamp, or 0 for never received. Used like `${DanNet.Q.Received}`
