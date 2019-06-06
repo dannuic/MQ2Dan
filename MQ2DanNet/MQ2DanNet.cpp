@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7506 -- fixed zoning with custom groups bug
  * dannuic: version 0.7505 -- changed observer TLO's (and fixed them), removed delay from `/dobs`, fixed major observer frequency bug
  * dannuic: version 0.7504 -- added zone channel, fixed Version TLO, expanded full names boolean
  * dannuic: version 0.7503 -- fixed group and raid bugs
@@ -56,7 +57,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7505);
+PLUGIN_VERSION(0.7506);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -164,6 +165,7 @@ namespace MQ2DanNet {
         MQ2DANNET_NODE_API void observe(const std::string& group, const std::string& name, const std::string& query);
         MQ2DANNET_NODE_API void forget(const std::string& group);
         MQ2DANNET_NODE_API void forget(const std::string& name, const std::string& query);
+        MQ2DANNET_NODE_API void forget_all(const std::string & name);
         MQ2DANNET_NODE_API void update(const std::string& group, const std::string& data, const std::string& output);
         MQ2DANNET_NODE_API const Observation read(const std::string& group);
         MQ2DANNET_NODE_API const Observation read(const std::string& name, const std::string& query);
@@ -855,7 +857,8 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     GetPrivateProfileString("General", "Interface", NULL, szBuf, MAX_STRING, INIFileName);
     if (szBuf && szBuf[0] != '\0')
         zyre_set_interface(node->_node, szBuf);
-    //zyre_set_interface(node->_node, "*");
+    else 
+        zyre_set_interface(node->_node, "*");
 
     // send our node name for easier name recognition
     zyre_set_header(node->_node, "name", "%s", node->_node_name.c_str());
@@ -871,6 +874,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     node->_rejoin_groups.clear();
 
     for (auto group : groups) {
+        node->_own_groups.emplace(group);
         zyre_join(node->_node, group.c_str());
     }
 
@@ -1283,6 +1287,21 @@ MQ2DANNET_NODE_API void MQ2DanNet::Node::forget(const std::string& name, const s
     _observed_map.erase(observed);
 }
 
+MQ2DANNET_NODE_API void MQ2DanNet::Node::forget_all(const std::string& name) {
+    std::list<Observed> to_drop;
+    _observed_map.foreach([this, &name, &to_drop](std::pair<Observed, std::string> pair) -> void {
+        if (pair.first.name == name) {
+            _observed_data.erase(pair.second);
+            leave(pair.second);
+            to_drop.push_back(pair.first);
+        }
+    });
+
+    for (auto drop : to_drop) {
+        _observed_map.erase(drop);
+    }
+}
+
 MQ2DANNET_NODE_API void MQ2DanNet::Node::update(const std::string& group, const std::string& data, const std::string& output) {
     _observed_data.upsert(group, Observation(output, data, MQGetTickCount64()));
 }
@@ -1437,7 +1456,9 @@ std::string MQ2DanNet::Node::peer_address(const std::string& name) {
 }
 
 void MQ2DanNet::Node::save_channels() {
-    _rejoin_groups.copy() = get_own_groups();
+    for (auto group : get_own_groups()) {
+        _rejoin_groups.insert(group);
+    }
 }
 
 void MQ2DanNet::Node::clear_saved_channels() {
@@ -2094,7 +2115,7 @@ public:
                     Dest.DWord = Node::get().get_group_peers(*group_it).size();
                 else
                     return false;
-            } else if (Index[0] != '\0') {
+            } else if (Index && Index[0] != '\0') {
                 Dest.DWord = Node::get().get_group_peers(Node::init_string(Index)).size();
             } else {
                 _peers = Node::get().get_peers();
@@ -2113,7 +2134,7 @@ public:
                     strcpy_s(_buf, out.c_str());
                 } else
                     return false;
-            } else if (Index[0] != '\0') {
+            } else if (Index && Index[0] != '\0') {
                 auto peers = Node::get().get_group_peers(Node::init_string(Index));
                 std::set<std::string> out;
                 if (Node::get().full_names())
@@ -2695,10 +2716,13 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         }
     } while ((szParam && szParam[0] != '\0') || current_param > 10);
 
-    if (name.empty() || query.empty()) {
+    if (drop && !name.empty()) {
+        if (query.empty())
+            Node::get().forget_all(name);
+        else
+            Node::get().forget(name, query);
+    } else if (name.empty() || query.empty()) {
         WriteChatColor("Syntax: /dobserve <name> [-q <query>] [-o <result>] [-drop] -- add an observer on name and update values in result, or drop the observer", USERCOLOR_DEFAULT);
-    } else if (drop) {
-        Node::get().forget(name, query);
     } else {
         auto peers = Node::get().get_peers();
         if (peers.find(name) == peers.end()) {
