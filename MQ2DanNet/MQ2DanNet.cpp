@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7510 -- major reworking of observers to be way more efficient
  * dannuic: version 0.7506 -- fixed zoning with custom groups bug
  * dannuic: version 0.7505 -- changed observer TLO's (and fixed them), removed delay from `/dobs`, fixed major observer frequency bug
  * dannuic: version 0.7504 -- added zone channel, fixed Version TLO, expanded full names boolean
@@ -185,7 +186,12 @@ namespace MQ2DanNet {
                 auto tick = MQGetTickCount64();
                 if (tick - observer.second.last >= std::max<unsigned __int64>(10 * observer.second.benchmark, observe_delay())) { // wait at least a second between updates
                     std::string group = observer_group(observer.first);
-                    shout<T>(group, observer.second.query, std::forward<Args>(args)...);
+                    std::string query_result = parse_query(observer.second.query);
+
+                    if (!_query_map.contains(observer.second.query) || _query_map.get(observer.second.query) != query_result) {
+                        _query_map.upsert(observer.second.query, query_result);
+                        shout<T>(group, query_result, std::forward<Args>(args)...);
+                    }
 
                     Query new_query(observer.second.query);
 
@@ -286,13 +292,13 @@ namespace MQ2DanNet {
         class locked_queue {
         private:
             std::mutex _mutex;
-            std::queue<T> _queue;
+            std::deque<T> _queue;
 
         public:
             //emplace empty front pop
             void emplace(T& e) {
                 _mutex.lock();
-                _queue.emplace(std::move(e));
+                _queue.emplace_front(std::move(e));
                 _mutex.unlock();
             }
 
@@ -301,10 +307,16 @@ namespace MQ2DanNet {
                 T r;
                 if (!_queue.empty()) {
                     r = std::move(_queue.front());
-                    _queue.pop(); // go ahead and pop it off, we've moved it
+                    _queue.pop_front(); // go ahead and pop it off, we've moved it
                 }
                 _mutex.unlock();
                 return r;
+            }
+
+            void remove_if(const std::function<bool(T&)>& f) {
+                _mutex.lock();
+                std::remove_if(_queue.begin(), _queue.end(), f);
+                _mutex.unlock();
             }
         };
 
@@ -436,6 +448,7 @@ namespace MQ2DanNet {
         // command containers
         locked_map<std::string, std::function<bool(std::stringstream&& args)> > _command_map; // callback name, callback
         locked_queue<std::pair<std::string, std::stringstream> > _command_queue; // pair callback name, callback
+        locked_map<std::string, std::string> _query_map; // query, result
 
         locked_set<unsigned char> _response_keys; // ordered number of responses
 
@@ -609,6 +622,7 @@ namespace MQ2DanNet {
         void shutdown();
 
         void do_next();
+        void remove_commands(const std::function<bool(std::pair<std::string, std::stringstream> &)>& f);
     };
 }
 
@@ -626,7 +640,7 @@ namespace MQ2DanNet {
 
     COMMAND(Observe, const std::string& query, const std::string& output);
 
-    COMMAND(Update, const std::string& query);
+    COMMAND(Update, const std::string& result);
 }
 
 #pragma endregion
@@ -1519,6 +1533,10 @@ void Node::do_next() {
     });
 }
 
+void Node::remove_commands(const std::function<bool(std::pair<std::string, std::stringstream> &)>& f) {
+    _command_queue.remove_if(f);
+}
+
 #pragma endregion
 
 #pragma region Commands
@@ -1752,6 +1770,23 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
 
     try {
         received >> from >> group >> data;
+        Node::get().remove_commands([from, group, &data](std::pair<std::string, std::stringstream>& command) -> bool {
+            if (command.first == Node::name<Update>()) {
+                std::stringstream args_copy(command.second.str());
+                Archive<std::stringstream> recv(args_copy);
+                std::string copy_from, copy_group, copy_data;
+
+                recv >> copy_from >> copy_group >> copy_data;
+                if (from == copy_from && group == copy_group) {
+                    DebugSpewAlways("DROPPING EXTRA UPDATE --> FROM: %s, GROUP: %s", from.c_str(), group.c_str());
+                    data = copy_data;
+                    return true;
+                }
+            }
+
+            return false;
+        });
+         
         DebugSpewAlways("UPDATE --> FROM: %s, GROUP: %s, DATA: %s", from.c_str(), group.c_str(), data.c_str());
 
         std::string output = Node::get().read(group).output;
@@ -1790,9 +1825,8 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
     return false;
 }
 
-std::stringstream MQ2DanNet::Update::pack(const std::string& recipient, const std::string& query) {
+std::stringstream MQ2DanNet::Update::pack(const std::string& recipient, const std::string& result) {
     std::stringstream send_stream;
-    std::string result = Node::get().parse_query(query);
 
     Archive<std::stringstream> send(send_stream);
     send << result;
@@ -2014,13 +2048,15 @@ public:
         O,
         Observe,
         OReceived,
+        ObserveReceived,
         OCount,
         ObserveCount,
         OSet,
         ObserveSet,
         Q,
         Query,
-        QReceived
+        QReceived,
+        QueryReceived
     };
 
     MQ2DanNetType() : MQ2Type("DanNet") {
@@ -2047,9 +2083,11 @@ public:
         TypeMember(OSet);
         TypeMember(ObserveSet);
         TypeMember(OReceived);
+        TypeMember(ObserveReceived);
         TypeMember(Q);
         TypeMember(Query);
         TypeMember(QReceived);
+        TypeMember(QueryReceived);
     }
 
     bool GetMember(MQ2VARPTR VarPtr, char* Member, char* Index, MQ2TYPEVAR &Dest) {
@@ -2214,6 +2252,7 @@ public:
             } else
                 return false;
         case QReceived:
+        case QueryReceived:
             _current_observation = Node::Observation(Node::get().query());
             Dest.UInt64 = _current_observation.received;
             Dest.Type = pInt64Type;
@@ -2283,6 +2322,7 @@ public:
             } else
                 return false;
         case OReceived:
+        case ObserveReceived:
             if (!local_peer.empty() && Index && Index[0] != '\0') {
                 _current_observation = Node::get().read(local_peer, Node::get().trim_query(Index));
                 Dest.UInt64 = _current_observation.received;
