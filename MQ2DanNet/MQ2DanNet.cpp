@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7511 -- fixed bug associated with high CPU usage (removed * default to interface) and made interface UI a little better
  * dannuic: version 0.7510 -- major reworking of observers to be way more efficient
  * dannuic: version 0.7506 -- fixed zoning with custom groups bug
  * dannuic: version 0.7505 -- changed observer TLO's (and fixed them), removed delay from `/dobs`, fixed major observer frequency bug
@@ -58,7 +59,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7510);
+PLUGIN_VERSION(0.7511);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -817,13 +818,29 @@ MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peer_groups(
 }
 
 MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_interfaces() {
-    ziflist_t *l = ziflist_new_ipv6();
-    std::string ifaces = ziflist_first(l);
-    while (auto iface = ziflist_next(l)) {
-        ifaces += "\r\n";
-        ifaces += iface;
-    }
+    const char *const current_iface = zsys_interface();
+    const unsigned int current_iface_idx = (strlen(current_iface) == 1 && current_iface[0] >= '0' && current_iface[0] <= '9') ?
+        atoi(current_iface) : strlen(current_iface) == 0 ? 0 : -1;
 
+    ziflist_t *l = ziflist_new_ipv6();
+    std::string ifaces;
+
+    const char* iface = ziflist_first(l);
+    int iface_idx = -1;
+    while (iface) {
+        ++iface_idx;
+        
+        if ((ziflist_is_ipv6(l) && !zsys_ipv6()) || (!ziflist_is_ipv6(l) && zsys_ipv6())) continue;
+        
+        std::stringstream ifacestream;
+        if ((current_iface_idx >= 0 && current_iface_idx == iface_idx) || streq(current_iface, iface))
+            ifacestream << " --> ";
+        else
+            ifacestream << "     ";
+        ifacestream << iface_idx << " [" << iface << "] " << ziflist_address(l) << " -- " << ziflist_broadcast(l) << "\r\n";
+        ifaces += ifacestream.str();
+        iface = ziflist_next(l);
+    }
     ziflist_destroy(&l);
 
     return ifaces;
@@ -871,8 +888,6 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     GetPrivateProfileString("General", "Interface", NULL, szBuf, MAX_STRING, INIFileName);
     if (szBuf && szBuf[0] != '\0')
         zyre_set_interface(node->_node, szBuf);
-    else 
-        zyre_set_interface(node->_node, "*");
 
     // send our node name for easier name recognition
     zyre_set_header(node->_node, "name", "%s", node->_node_name.c_str());
@@ -916,7 +931,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
             // otherwise, we'd have to deal with byte streams, which is totally unnecessary
             char *command = zmsg_popstr(msg);
 
-            DebugSpewAlways("MQ2DanNet: command: %s", command);
+            //DebugSpewAlways("MQ2DanNet: command: %s", command);
 
             // IMPORTANT: local commands are all caps, Remote commands will be passed to this as their class name
             if (streq(command, "$TERM")) { // need to handle $TERM per zactor contract
@@ -1106,7 +1121,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 } else {
                     node->_connected_peers.upsert(name, uuid);
                 }
-                DebugSpewAlways("%s is ENTERing.", name.c_str());
+                //DebugSpewAlways("%s is ENTERing.", name.c_str());
             } else if (event_type == "EXIT") {
                 node->_connected_peers.erase(name);
 
@@ -1122,7 +1137,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                     node->_peer_groups.upsert(it->first, it->second);
                 }
 
-                DebugSpewAlways("%s is EXITing.", name.c_str());
+                //DebugSpewAlways("%s is EXITing.", name.c_str());
             } else if (event_type == "JOIN") {
                 std::string group = init_string(zyre_event_group(z_event));
 
@@ -1136,7 +1151,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                     node->_peer_groups.upsert(group, [&name](std::set<std::string>& group) -> void {
                         group.emplace(name);
                     });
-                    DebugSpewAlways("JOIN %s : %s", group.c_str(), name.c_str());
+                    //DebugSpewAlways("JOIN %s : %s", group.c_str(), name.c_str());
                 }
             } else if (event_type == "LEAVE") {
                 std::string group = init_string(zyre_event_group(z_event));
@@ -1151,7 +1166,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                         group.erase(name);
                         return group.empty();
                     });
-                    DebugSpewAlways("LEAVE %s : %s", group.c_str(), name.c_str());
+                    //DebugSpewAlways("LEAVE %s : %s", group.c_str(), name.c_str());
                 }
             } else if (event_type == "WHISPER") {
                 // use get_msg because we want ownership to pass the command up
@@ -1484,6 +1499,11 @@ void Node::enter() {
     if (!pChar)
         return;
 
+    if (_actor) {
+        DebugSpewAlways("Already had actor for %s", _node_name.c_str());
+        zactor_destroy(&_actor);
+    }
+
     _node_name = get_full_name(pChar->Name);
 
     DebugSpewAlways("Spinning up actor for %s", _node_name.c_str());
@@ -1550,7 +1570,7 @@ const bool MQ2DanNet::Echo::callback(std::stringstream&& args) {
     try {
         received >> from >> group >> text;
         from = Node::get().get_name(from);
-        DebugSpewAlways("ECHO --> FROM: %s, GROUP: %s, TEXT: %s", from.c_str(), group.c_str(), text.c_str());
+        //DebugSpewAlways("ECHO --> FROM: %s, GROUP: %s, TEXT: %s", from.c_str(), group.c_str(), text.c_str());
 
         if (group.empty())
             WriteChatf("\ax\a-t[\ax\at %s \ax\a-t]\ax \aw%s\ax", from.c_str(), text.c_str());
@@ -1580,7 +1600,7 @@ const bool MQ2DanNet::Execute::callback(std::stringstream&& args) {
 
     try {
         received >> from >> group >> command;
-        DebugSpewAlways("EXECUTE --> FROM: %s, GROUP: %s, TEXT: %s", from.c_str(), group.c_str(), command.c_str());
+        //DebugSpewAlways("EXECUTE --> FROM: %s, GROUP: %s, TEXT: %s", from.c_str(), group.c_str(), command.c_str());
 
         std::string final_command = std::regex_replace(command, std::regex("\\$\\\\\\{"), "${");
 
@@ -1620,7 +1640,7 @@ const bool MQ2DanNet::Query::callback(std::stringstream&& args) {
 
     try {
         received >> from >> group >> key >> request;
-        DebugSpewAlways("QUERY --> FROM: %s, GROUP: %s, REQUEST: %s", from.c_str(), group.c_str(), request.c_str());
+        //DebugSpewAlways("QUERY --> FROM: %s, GROUP: %s, REQUEST: %s", from.c_str(), group.c_str(), request.c_str());
 
         std::stringstream send_stream;
         Archive<std::stringstream> send(send_stream);
@@ -1692,7 +1712,7 @@ const bool MQ2DanNet::Observe::callback(std::stringstream&& args) {
 
     try {
         received >> from >> group >> key >> query;
-        DebugSpewAlways("OBSERVE --> FROM: %s, GROUP: %s, QUERY: %s", from.c_str(), group.c_str(), query.c_str());
+        //DebugSpewAlways("OBSERVE --> FROM: %s, GROUP: %s, QUERY: %s", from.c_str(), group.c_str(), query.c_str());
 
         std::stringstream args;
         Archive<std::stringstream> ar(args);
@@ -1778,7 +1798,7 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
 
                 recv >> copy_from >> copy_group >> copy_data;
                 if (from == copy_from && group == copy_group) {
-                    DebugSpewAlways("DROPPING EXTRA UPDATE --> FROM: %s, GROUP: %s", from.c_str(), group.c_str());
+                    //DebugSpewAlways("DROPPING EXTRA UPDATE --> FROM: %s, GROUP: %s", from.c_str(), group.c_str());
                     data = copy_data;
                     return true;
                 }
@@ -1787,7 +1807,7 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
             return false;
         });
          
-        DebugSpewAlways("UPDATE --> FROM: %s, GROUP: %s, DATA: %s", from.c_str(), group.c_str(), data.c_str());
+        //DebugSpewAlways("UPDATE --> FROM: %s, GROUP: %s, DATA: %s", from.c_str(), group.c_str(), data.c_str());
 
         std::string output = Node::get().read(group).output;
         CHAR szOutput[MAX_STRING] = { 0 };
