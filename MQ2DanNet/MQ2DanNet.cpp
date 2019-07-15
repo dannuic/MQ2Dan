@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7512 -- added keepalive to main actor thread with configuration option for frequency, and added options for expire and evasive timeouts
  * dannuic: version 0.7511 -- fixed bug associated with high CPU usage (removed * default to interface) and made interface UI a little better
  * dannuic: version 0.7510 -- major reworking of observers to be way more efficient
  * dannuic: version 0.7506 -- fixed zoning with custom groups bug
@@ -59,7 +60,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7511);
+PLUGIN_VERSION(0.7512);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -445,6 +446,7 @@ namespace MQ2DanNet {
         // I don't like this, but since zyre/czmq does the memory management for these, I should store these as raw pointers
         zyre_t *_node;
         zactor_t *_actor;
+        zpoller_t *_poller;
 
         // command containers
         locked_map<std::string, std::function<bool(std::stringstream&& args)> > _command_map; // callback name, callback
@@ -523,6 +525,8 @@ namespace MQ2DanNet {
         bool _front_delimiter;
         unsigned int _observe_delay;
         unsigned int _keepalive;
+        unsigned int _evasive;
+        unsigned int _expired;
         unsigned __int64 _last_group_check;
 
         // explicitly prevent copy/move operations.
@@ -609,6 +613,12 @@ namespace MQ2DanNet {
         unsigned int keepalive(unsigned int keepalive) { _keepalive = keepalive; if (_actor) zstr_sendx(_actor, "KEEPALIVE", std::to_string(keepalive).c_str(), NULL); return _keepalive; }
         unsigned int keepalive() { return _keepalive; }
 
+        unsigned int evasive(unsigned int evasive) { _evasive = evasive; if (_actor) zstr_sendx(_actor, "EVASIVE", std::to_string(evasive).c_str(), NULL); return _evasive; }
+        unsigned int evasive() { return _evasive; }
+
+        unsigned int expired(unsigned int expired) { _expired = expired; if (_actor) zstr_sendx(_actor, "EXPIRED", std::to_string(expired).c_str(), NULL); return _expired; }
+        unsigned int expired() { return _expired; }
+
         unsigned __int64 last_group_check(unsigned __int64 last_group_check) { _last_group_check = last_group_check; return _last_group_check; }
         unsigned __int64 last_group_check() { return _last_group_check; }
 
@@ -621,6 +631,7 @@ namespace MQ2DanNet {
         void startup();
         void set_timeout(int timeout);
         void shutdown();
+        void recv();
 
         void do_next();
         void remove_commands(const std::function<bool(std::pair<std::string, std::stringstream> &)>& f);
@@ -892,7 +903,9 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     // send our node name for easier name recognition
     zyre_set_header(node->_node, "name", "%s", node->_node_name.c_str());
     zyre_start(node->_node);
-    zyre_set_expired_timeout(node->_node, node->keepalive());
+    if (node->evasive() > 0) zyre_set_evasive_timeout(node->_node, node->evasive());
+    if (node->expired() > 0) zyre_set_expired_timeout(node->_node, node->expired());
+    unsigned int keepalive = node->keepalive() > 0 ? node->keepalive() : 30000;
 
     zsock_signal(pipe, 0); // ready signal, required by zactor contract
 
@@ -914,12 +927,16 @@ void Node::node_actor(zsock_t *pipe, void *args) {
 
     bool terminated = false;
     while (!terminated) {
-        void *which = zpoller_wait(poller, -1);
+        void *which = zpoller_wait(poller, keepalive);
 
         bool did_expire = zpoller_expired(poller);
         bool did_terminate = zpoller_terminated(poller);
 
-        if (!which || !pipe || !node || !node->_node) {
+        if (did_expire) {
+            zsock_signal(pipe, 0);
+            int rc = zsock_wait(pipe);
+            if (rc != 0) terminated = true;
+        } else if (!which || !pipe || !node || !node->_node || did_terminate) {
             terminated = true;
         } else if (which == pipe) {
             // we've got a command from the caller here
@@ -1059,6 +1076,24 @@ void Node::node_actor(zsock_t *pipe, void *args) {
 
                 if (zmsg_size(address) == 0) zmsg_pushstr(address, "");
                 zmsg_send(&address, pipe);
+            } else if (streq(command, "EVASIVE")) {
+                char *szEvasive = zmsg_popstr(msg);
+                if (IsNumber(szEvasive)) {
+                    zyre_set_evasive_timeout(node->_node, node->evasive());
+                } else if (szEvasive) {
+                    DebugSpewAlways("EVASIVE: Trying to set non-numeric %s.", szEvasive);
+                } else {
+                    DebugSpewAlways("EVASIVE: Trying to set null.");
+                }
+            } else if (streq(command, "EXPIRED")) {
+                char *szExpired = zmsg_popstr(msg);
+                if (IsNumber(szExpired)) {
+                    zyre_set_expired_timeout(node->_node, node->expired());
+                } else if (szExpired) {
+                    DebugSpewAlways("EXPIRED: Trying to set non-numeric %s.", szExpired);
+                } else {
+                    DebugSpewAlways("EXPIRED: Trying to set null.");
+                }
             } else if (streq(command, "KEEPALIVE")) {
                 char *szKeepalive = zmsg_popstr(msg);
                 if (IsNumber(szKeepalive)) {
@@ -1239,6 +1274,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     zyre_stop(node->_node);
     zclock_sleep(100);
     zyre_destroy(&node->_node);
+    zpoller_destroy(&node->_poller);
     zclock_sleep(100);
 }
 
@@ -1508,16 +1544,32 @@ void Node::enter() {
 
     DebugSpewAlways("Spinning up actor for %s", _node_name.c_str());
     _actor = zactor_new(Node::node_actor, this);
+
+    if (_actor) {
+        if (_poller) {
+            zpoller_destroy(&_poller);
+        }
+
+        _poller = zpoller_new(_actor, (void*)NULL);
+        if (!_poller) throw new std::invalid_argument("Could not create poller");
+    }
 }
 
 void Node::exit() {
     if (_actor) {
         DebugSpewAlways("Destroying actor for %s", _node_name.c_str());
         zactor_destroy(&_actor);
-    } else if (_node) {
+    } else if (_node || _poller) {
         // in general destroying the zactor will do this, but just in case it's dangling, let's be safe
-        DebugSpewAlways("WARNING: had a node without an actor in %s", _node_name.c_str());
-        zyre_destroy(&_node);
+        if (_node) {
+            DebugSpewAlways("WARNING: had a node without an actor in %s", _node_name.c_str());
+            zyre_destroy(&_node);
+        }
+
+        if (_poller) {
+            DebugSpewAlways("WARNING: had a poller without an actor in %s", _node_name.c_str());
+            zpoller_destroy(&_poller);
+        }
     }
 
     _node_name = "";
@@ -1535,6 +1587,21 @@ void MQ2DanNet::Node::set_timeout(int timeout) {
 
 void MQ2DanNet::Node::shutdown() {
     zsys_shutdown();
+}
+
+void MQ2DanNet::Node::recv() {
+    if (!_poller) return;
+
+    void* which = zpoller_wait(_poller, 0);
+    if (which) {
+        // we currently only expect signals here for a keepalive -- this can be expanded to a full heartbeat if necessary
+        zmsg_t *msg = zmsg_recv(which);
+        if (msg) {
+            int rc = zmsg_signal(msg);
+            zmsg_destroy(&msg);
+            if (rc == 0) zsock_signal(_actor, 0);
+        }
+    }
 }
 
 void Node::queue_command(const std::string& command, std::stringstream&& args) {
@@ -1892,6 +1959,10 @@ std::string GetDefault(const std::string& val) {
         return std::string("off");
     else if (val == "Observe Delay")
         return std::string("1000");
+    else if (val == "Evasive")
+        return std::string("1000");
+    else if (val == "Expired")
+        return std::string("30000");
     else if (val == "Keepalive")
         return std::string("30000");
 
@@ -2058,6 +2129,8 @@ public:
         FrontDelim,
         Timeout,
         ObserveDelay,
+        Evasive,
+        Expired,
         Keepalive,
         PeerCount,
         Peers,
@@ -2089,6 +2162,8 @@ public:
         TypeMember(FrontDelim);
         TypeMember(Timeout);
         TypeMember(ObserveDelay);
+        TypeMember(Evasive);
+        TypeMember(Expired);
         TypeMember(Keepalive);
         TypeMember(PeerCount);
         TypeMember(Peers);
@@ -2157,6 +2232,14 @@ public:
             return true;
         case ObserveDelay:
             Dest.DWord = Node::get().observe_delay();
+            Dest.Type = pIntType;
+            return true;
+        case Evasive:
+            Dest.DWord = Node::get().evasive();
+            Dest.Type = pIntType;
+            return true;
+        case Expired:
+            Dest.DWord = Node::get().expired();
             Dest.Type = pIntType;
             return true;
         case Keepalive:
@@ -2459,6 +2542,20 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         else
             SetVar("General", "Observe Delay", GetDefault("Observe Delay"));
         Node::get().observe_delay(atoi(ReadVar("Observe Delay").c_str()));
+    } else if (szParam && !strcmp(szParam, "evasive")) {
+        GetArg(szParam, szLine, 2);
+        if (szParam && IsNumber(szParam))
+            SetVar("General", "Evasive", szParam);
+        else
+            SetVar("General", "Evasive", GetDefault("Evasive"));
+        Node::get().evasive(atoi(ReadVar("Evasive").c_str()));
+    } else if (szParam && !strcmp(szParam, "expired")) {
+        GetArg(szParam, szLine, 2);
+        if (szParam && IsNumber(szParam))
+            SetVar("General", "Expired", szParam);
+        else
+            SetVar("General", "Expired", GetDefault("Expired"));
+        Node::get().expired(atoi(ReadVar("Expired").c_str()));
     } else if (szParam && !strcmp(szParam, "keepalive")) {
         GetArg(szParam, szLine, 2);
         if (szParam && IsNumber(szParam))
@@ -2483,6 +2580,8 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         WriteChatf("           \ayfrontdelim [on|off]\ax -- turn front delimiters on or off");
         WriteChatf("           \aytimeout [new_timeout]\ax -- set the /dquery timeout");
         WriteChatf("           \ayobservedelay [new_delay]\ax -- set the delay between observe sends in ms");
+        WriteChatf("           \ayevasive [new_evasive]\ax -- set the evasive timeout in ms");
+        WriteChatf("           \ayexpired [new_expired]\ax -- set the expired timeout in ms");
         WriteChatf("           \aykeepalive [new_keepalive]\ax -- set the keepalive time for non-responding peers in ms");
         WriteChatf("           \ayinfo\ax -- output group/peer information");
     }
@@ -2886,6 +2985,22 @@ PLUGIN_API VOID InitializePlugin(VOID) {
         Node::get().observe_delay(atoi(GetDefault("Observe Delay").c_str()));
     }
 
+    CHAR evasive[MAX_STRING] = { 0 };
+    strcpy_s(evasive, ReadVar("Evasive").c_str());
+    if (IsNumber(evasive)) {
+        Node::get().evasive(atoi(evasive));
+    } else {
+        Node::get().evasive(atoi(GetDefault("Evasive").c_str()));
+    }
+
+    CHAR expired[MAX_STRING] = { 0 };
+    strcpy_s(expired, ReadVar("Expired").c_str());
+    if (IsNumber(expired)) {
+        Node::get().expired(atoi(expired));
+    } else {
+        Node::get().expired(atoi(GetDefault("Expired").c_str()));
+    }
+
     CHAR keepalive[MAX_STRING] = { 0 };
     strcpy_s(keepalive, ReadVar("Keepalive").c_str());
     if (IsNumber(keepalive)) {
@@ -3016,6 +3131,8 @@ PLUGIN_API VOID OnCleanUI(VOID) {
 
 // This is called every time MQ pulses
 PLUGIN_API VOID OnPulse(VOID) {
+    Node::get().recv();
+
     if (Node::get().last_group_check() + 1000 < MQGetTickCount64()) {
         // time to check our group!
         Node::get().last_group_check(MQGetTickCount64());

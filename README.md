@@ -100,7 +100,9 @@ Rather than adding peers to a group manually, you can use existing commands to a
 * `FrontDelim` -- use a front | in arrays?
 * `Timeout` -- timeout for implicit delay in `/dquery` and `/dobserve` commands
 * `ObserveDelay` -- delay between observe broadcasts (in ms)
-* `Keepalive` -- keepalive time for non-responding peers (in ms)
+* `Evasive` -- time to classify a peer as evasive (in ms)
+* `Expired` -- keepalive time for non-responding peers (in ms)
+* `Keepalive` -- keepalive time for local actor pipe (in ms)
 * `PeerCount` -- number of connected peers
 * `Peers` -- list of connected peers
   * `${DanNet.Peers}` -- all connected oeers
@@ -131,7 +133,9 @@ Both `Observe and `Query` are their own data types, which provide a `Received` m
   * `Front Delimiter` -- on/off/true/false boolean for putting the `|` at the front for the TLO output of `DanNet.Peers` &c, default `off`
   * `Query Timeout` -- timeout string for implicit delay in `/dquery` and `/dobserve`, default is `1s`
   * `Observe Delay` -- delay in milliseconds for observation evaluations to be sent, default is `1000`
-  * `Keepalive` -- timeout in milliseconds before an unresponsive peer is dropped, default is `30000`
+  * `Evasive` -- timeout in milliseconds before a peer is considered evasive, default is `1000`
+  * `Expired` -- timeout in milliseconds before an unresponsive peer is dropped, default is `30000`
+  * `Keepalive` -- timeout in milliseconds to ping the main thread to keep it fresh, default is `30000`
   * `Tank` -- short-name class list to auto-join the tank channel, default is `war|pal|shd|`
   * `Priest` -- short-name class list to auto-join the priest channel, default is `clr|dru|shm|`
   * `Melee` -- short-name class list to auto-join the melee channel, default is `brd|rng|mnk|rog|bst|ber|`
