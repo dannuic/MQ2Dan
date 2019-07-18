@@ -146,3 +146,4 @@ Both `Observe and `Query` are their own data types, which provide a `Received` m
 
 ### Known Issues
 * Proper workgroup permissions are needed for different network groups across PC's (specifically windows 10 with windows 7 machines)
+* ZeroMQ has structural issues if something externally closes the TCP sockets that it is using for inter-process communication. If you are getting unexpected crashes after some time running, check your antivirus/firewall software to ensure that it's letting eqgame exist peacefully. Kaspersky is known to close these sockets.
