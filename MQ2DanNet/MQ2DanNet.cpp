@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * plure:   version 0.7513 -- added the ability for other plugin's to check if someone is connected to mq2dannet
  * dannuic: version 0.7512 -- added keepalive to main actor thread with configuration option for frequency, and added options for expire and evasive timeouts
  * dannuic: version 0.7511 -- fixed bug associated with high CPU usage (removed * default to interface) and made interface UI a little better
  * dannuic: version 0.7510 -- major reworking of observers to be way more efficient
@@ -60,7 +61,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7512);
+PLUGIN_VERSION(0.7513);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -2569,6 +2570,14 @@ std::string unescape_string(const std::string& input) {
     }
 
     return std::string(szOut);
+}
+
+// The name must be send as server_name
+extern "C" MQ2DANNET_NODE_API bool peer_connected(const std::string& name)
+{
+	std::string lower_name = Node::init_string(name.c_str());
+	auto peers = Node::get().get_peers();
+	return std::find(peers.begin(), peers.end(), lower_name) != peers.end();
 }
 
 PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
