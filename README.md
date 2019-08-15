@@ -67,7 +67,7 @@ Examples:
 
 * `/bccmd channels group1 raid1` -- requires the full list of channels any time you want to join a new channel.
   * `/djoin group1 save` -- join group1 group, store settings in MQ2DanNet.ini under `[server_character]`.  Character will automatically join this group for future sessions.
-  * `/djoin raid1 save` -- join raid1 group, store settings in MQ2DanNet.ini under `[server_character]`.  Character will automatically join this group for future sessions.
+  * `/djoin tanks save` -- join tanks group, store settings in MQ2DanNet.ini under `[server_character]`.  Character will automatically join this group for future sessions.
   * `/dleave raid1 save` -- leave raid1 group, save settings in MQ2DanNet.ini under `[server_character]`.  Character will NOT automatically join this group for future sessions.
 
 Rather than adding peers to a group manually, you can use existing commands to add a temporary in-game group/raid setup to a new DanNet group -
@@ -100,7 +100,9 @@ Rather than adding peers to a group manually, you can use existing commands to a
 * `FrontDelim` -- use a front | in arrays?
 * `Timeout` -- timeout for implicit delay in `/dquery` and `/dobserve` commands
 * `ObserveDelay` -- delay between observe broadcasts (in ms)
-* `Keepalive` -- keepalive time for non-responding peers (in ms)
+* `Evasive` -- time to classify a peer as evasive (in ms)
+* `Expired` -- keepalive time for non-responding peers (in ms)
+* `Keepalive` -- keepalive time for local actor pipe (in ms)
 * `PeerCount` -- number of connected peers
 * `Peers` -- list of connected peers
   * `${DanNet.Peers}` -- all connected oeers
@@ -110,6 +112,12 @@ Rather than adding peers to a group manually, you can use existing commands to a
 * `JoinedCount` -- number of joined groups
 * `Joined` -- list of joined groups
 * `O` `Observe` -- observe accessor, accessed like: `${DanNet[peer_name].Observe[query]}`
+  * if no indices are specified, lists all queries observers have registered
+  * if only the query is specified, list all peers that have registered that query as an observer on self
+  * if only the peer is specified, list all queries that self has registered on peer
+  * if fully specified, attempt to retrieve the data specified on the remote peer
+* `OCount` `ObserveCount` -- count observed data on peer, or count observers on self if no peer is specified
+* `OSet` `ObserveSet` -- determine if query has been set as observed data on peer, or as an observer on self if no peer specified
 * `Q` `Query` -- query accessor, for last executed query
 
 Both `Observe and `Query` are their own data types, which provide a `Received` member to determine the last received timestamp, or 0 for never received. Used like `${DanNet.Q.Received}`
@@ -125,7 +133,9 @@ Both `Observe and `Query` are their own data types, which provide a `Received` m
   * `Front Delimiter` -- on/off/true/false boolean for putting the `|` at the front for the TLO output of `DanNet.Peers` &c, default `off`
   * `Query Timeout` -- timeout string for implicit delay in `/dquery` and `/dobserve`, default is `1s`
   * `Observe Delay` -- delay in milliseconds for observation evaluations to be sent, default is `1000`
-  * `Keepalive` -- timeout in milliseconds before an unresponsive peer is dropped, default is `30000`
+  * `Evasive` -- timeout in milliseconds before a peer is considered evasive, default is `1000`
+  * `Expired` -- timeout in milliseconds before an unresponsive peer is dropped, default is `30000`
+  * `Keepalive` -- timeout in milliseconds to ping the main thread to keep it fresh, default is `30000`
   * `Tank` -- short-name class list to auto-join the tank channel, default is `war|pal|shd|`
   * `Priest` -- short-name class list to auto-join the priest channel, default is `clr|dru|shm|`
   * `Melee` -- short-name class list to auto-join the melee channel, default is `brd|rng|mnk|rog|bst|ber|`
@@ -136,3 +146,4 @@ Both `Observe and `Query` are their own data types, which provide a `Received` m
 
 ### Known Issues
 * Proper workgroup permissions are needed for different network groups across PC's (specifically windows 10 with windows 7 machines)
+* ZeroMQ has structural issues if something externally closes the TCP sockets that it is using for inter-process communication. If you are getting unexpected crashes after some time running, check your antivirus/firewall software to ensure that it's letting eqgame exist peacefully. Kaspersky is known to close these sockets.

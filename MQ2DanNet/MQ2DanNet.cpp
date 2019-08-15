@@ -1,5 +1,10 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7512 -- added keepalive to main actor thread with configuration option for frequency, and added options for expire and evasive timeouts
+ * dannuic: version 0.7511 -- fixed bug associated with high CPU usage (removed * default to interface) and made interface UI a little better
+ * dannuic: version 0.7510 -- major reworking of observers to be way more efficient
+ * dannuic: version 0.7506 -- fixed zoning with custom groups bug
+ * dannuic: version 0.7505 -- changed observer TLO's (and fixed them), removed delay from `/dobs`, fixed major observer frequency bug
  * dannuic: version 0.7504 -- added zone channel, fixed Version TLO, expanded full names boolean
  * dannuic: version 0.7503 -- fixed group and raid bugs
  * dannuic: version 0.7502 -- allowed /dge in not-joined channels and added color parsing to tells
@@ -7,7 +12,7 @@
  * dannuic: version 0.75 -- merged mutex branch into master
  * dannuic: version 0.7402 -- added some null checks to guard against crashes during crashes
  * dannuic: version 0.7401 -- test branch to add mutex operations for all shared resources
- * dannuic: version 0.74 -- fixed issue with auto group and auto raid with multiple groups in network 
+ * dannuic: version 0.74 -- fixed issue with auto group and auto raid with multiple groups in network
  * dannuic: version 0.73 -- added /dnet version
  * dannuic: version 0.72 -- corrected detection of "all" group echos/commands
  * dannuic: version 0.71 -- added auto raid channel join
@@ -28,7 +33,7 @@
 // are shown below. Remove the ones your plugin does not use.  Always use Initialize
 // and Shutdown for setup and cleanup, do NOT do it in DllMain.
 
- // IMPORTANT! This must be included first because it includes <winsock2.h>, which needs to come before <windows.h> -- we cannot guarantee no inclusion of <windows.h> in other headers
+// IMPORTANT! This must be included first because it includes <winsock2.h>, which needs to come before <windows.h> -- we cannot guarantee no inclusion of <windows.h> in other headers
 #ifdef LOCAL_BUILD
 #include <zyre.h>
 #else
@@ -55,7 +60,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7504);
+PLUGIN_VERSION(0.7512);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -67,521 +72,613 @@ PreSetup("MQ2DanNet");
 #endif
 
 // reduce some boilerplate - we don't actually want to instantiate our commands, so delete all 5 assign/ctors
-#define COMMAND(_Name, ...) class _Name {\
-public:\
-    static const std::string name() { return #_Name; }\
-    static const bool callback(std::stringstream&& args);\
-    static std::stringstream pack(const std::string& recipient, ##__VA_ARGS__ );\
-private:\
-    _Name() = delete;\
-    _Name(const _Name&) = delete;\
-    _Name& operator=(const _Name&) = delete;\
-    _Name(_Name&&) = delete;\
-    _Name& operator=(_Name&&) = delete;\
-}
+#define COMMAND(_Name, ...)                                                         \
+    class _Name {                                                                   \
+    public:                                                                         \
+        static const std::string name() { return #_Name; }                          \
+        static const bool callback(std::stringstream&& args);                       \
+        static std::stringstream pack(const std::string& recipient, ##__VA_ARGS__); \
+                                                                                    \
+    private:                                                                        \
+        _Name() = delete;                                                           \
+        _Name(const _Name&) = delete;                                               \
+        _Name& operator=(const _Name&) = delete;                                    \
+        _Name(_Name&&) = delete;                                                    \
+        _Name& operator=(_Name&&) = delete;                                         \
+    }
 
 namespace MQ2DanNet {
-    class Node final {
-    public:
-        MQ2DANNET_NODE_API static Node& get();
-
-        MQ2DANNET_NODE_API void join(const std::string& group);
-        MQ2DANNET_NODE_API void leave(const std::string& group);
-
-        MQ2DANNET_NODE_API void on_join(std::function<bool(const std::string&, const std::string&)> callback);
-        MQ2DANNET_NODE_API void on_leave(std::function<bool(const std::string&, const std::string&)> callback);
-
-        template<typename T, typename... Args>
-        void whisper(const std::string& recipient, Args&&... args) {
-            std::stringstream arg_stream = pack<T>(recipient, std::forward<Args>(args)...);
-            respond(recipient, name<T>(), std::move(arg_stream));
-        }
-
-        template<typename T, typename... Args>
-        void shout(const std::string& group, Args&&... args) {
-            std::stringstream arg_stream = pack<T>(group, std::forward<Args>(args)...);
-            publish(group, name<T>(), std::move(arg_stream));
-        }
-
-        MQ2DANNET_NODE_API const std::list<std::string> get_info();
-        MQ2DANNET_NODE_API const std::set<std::string> get_peers();
-        MQ2DANNET_NODE_API const std::set<std::string> get_all_groups();
-        MQ2DANNET_NODE_API const std::set<std::string> get_own_groups();
-        MQ2DANNET_NODE_API const std::map<std::string, std::set<std::string> > get_group_peers();
-        MQ2DANNET_NODE_API const std::set<std::string> get_group_peers(const std::string& group);
-        MQ2DANNET_NODE_API const std::set<std::string> get_peer_groups(const std::string& peer);
-        MQ2DANNET_NODE_API const std::string get_interfaces();
-        MQ2DANNET_NODE_API const std::string get_full_name(const std::string& name);
-		MQ2DANNET_NODE_API const std::string get_short_name(const std::string& name);
-		MQ2DANNET_NODE_API const std::string get_name(const std::string& name);
-
-        // quick helper function to safely init strings from chars
-        MQ2DANNET_NODE_API static std::string init_string(const char *szStr);
-
-        template<typename T>
-        static const std::string name() { return T::name(); }
-
-        template<typename T>
-        static const std::function<bool(std::stringstream&&)> callback() {
-            return T::callback;
-        }
-
-        // we gotta trust that copy elision works here, which it should in c++14 or more for stringstream.
-        // worst case is a slightly slower command because we have to copy the stream
-        template<typename T, typename... Args>
-        static std::stringstream pack(Args&&... args) { return T::pack(std::forward<Args>(args)...); }
-
-        template<typename T>
-        void register_command() { register_command(name<T>(), callback<T>()); }
-
-        template<typename T>
-        void unregister_command() { unregister_command(name<T>()); }
-        
-        // register custom commands (for responses)
-        void register_command(const std::string& name, std::function<bool(std::stringstream&&)> callback) { _command_map.upsert(name, callback); }
-        void unregister_command(const std::string& name) { _command_map.erase(name); }
-
-        // finds and inserts the next int key, returns `"response" + new_key`
-        // this is generated by the requester
-        MQ2DANNET_NODE_API std::string register_response(std::function<bool(std::stringstream&&)> callback);
-        MQ2DANNET_NODE_API void respond(const std::string& name, const std::string& cmd, std::stringstream&& args);
-
-        struct Observation final {
-            std::string output;
-            std::string data;
-            unsigned __int64 received;
-
-			Observation(const Observation& obs) : output(obs.output), data(obs.data), received(obs.received) {}
-            Observation(const std::string& output) : output(output), data("NULL"), received(0) {}
-            Observation(const std::string& output, const std::string& data, unsigned __int64 received) : output(output), data(data), received(received) {}
-            Observation() : output(), data("NULL"), received(0) {}
-        };
-
-        // finds query and returns the observation group, generates new group name if query not found
-        MQ2DANNET_NODE_API std::string register_observer(const std::string& group, const std::string& query);
-        MQ2DANNET_NODE_API void unregister_observer(const std::string& query);
-        MQ2DANNET_NODE_API void observe(const std::string& group, const std::string& name, const std::string& query);
-        MQ2DANNET_NODE_API void forget(const std::string& group);
-        MQ2DANNET_NODE_API void forget(const std::string& name, const std::string& query);
-        MQ2DANNET_NODE_API void update(const std::string& group, const std::string& data, const std::string& output);
-        MQ2DANNET_NODE_API const Observation read(const std::string& group);
-        MQ2DANNET_NODE_API const Observation read(const std::string& name, const std::string& query);
-        MQ2DANNET_NODE_API bool can_read(const std::string& name, const std::string& query);
-        MQ2DANNET_NODE_API void publish(const std::string& group, const std::string& cmd, std::stringstream&& args);
-
-        template<typename T, typename... Args>
-        void publish(Args&&... args) {
-			_observer_map.foreach([this](std::pair<unsigned int, Query> observer) -> void {
-				auto tick = MQGetTickCount64();
-				if (tick - observer.second.last >= std::max<unsigned __int64>(10 * observer.second.benchmark, observe_delay())) { // wait at least a second between updates
-					std::string group = observer_group(observer.first);
-					shout<T>(group, observer.second.query, std::forward<Args>(args)...);
-
-					auto proc_time = MQGetTickCount64() - tick;
-					if (observer.second.benchmark == 0)
-						observer.second.benchmark = proc_time;
-					else
-						observer.second.benchmark = static_cast<unsigned __int64>(0.5 * (observer.second.benchmark + proc_time));
-
-					observer.second.last = tick;
-				}
-			});
-        }
-
-    private:
-        std::string _node_name;
-
-		// we don't need anything crazy here, there is only a single actor so deadlocks won't be an issue (if we're not dumb about it)
-		template <typename T>
-		class locked_vector {
-		private:
-			std::mutex _mutex;
-			std::vector<T> _vector;
-
-		public:
-			void push_back(T& e) {
-				_mutex.lock();
-				_vector.push_back(e);
-				_mutex.unlock();
-			}
-
-			void remove_if(std::function<bool(T)> f) {
-				_mutex.lock();
-				for (auto it = _vector.begin(); it != _vector.end();) {
-					if (f(*it))
-						_vector.erase(it);
-					else
-						++it;
-				}
-				_mutex.unlock();
-			}
-		};
-
-		template <typename T>
-		class locked_set {
-		private:
-			std::mutex _mutex;
-			std::set<T> _set;
-
-		public:
-			std::set<T> copy() {
-				_mutex.lock();
-				std::set<T> r;
-				r.insert(_set.cbegin(), _set.cend());
-				_mutex.unlock();
-				return r;
-			}
-
-			void clear() {
-				_mutex.lock();
-				_set.clear();
-				_mutex.unlock();
-			}
-
-			void emplace(T e) {
-				_mutex.lock();
-				_set.emplace(e);
-				_mutex.unlock();
-			}
-
-			void erase(T e) {
-				_mutex.lock();
-				_set.erase(e);
-				_mutex.unlock();
-			}
-
-			T get_next(std::function<T(T)> f) {
-				_mutex.lock();
-				T r = f(*(_set.crbegin()));
-				_mutex.unlock();
-				return r;
-			}
-
-			void insert(T& e) {
-				_mutex.lock();
-				_set.insert(e);
-				_mutex.unlock();
-			}
-		};
-
-		template<typename T>
-		class locked_queue {
-		private:
-			std::mutex _mutex;
-			std::queue<T> _queue;
-
-		public:
-			//emplace empty front pop
-			void emplace(T& e) {
-				_mutex.lock();
-				_queue.emplace(std::move(e));
-				_mutex.unlock();
-			}
-
-			T pop() {
-				_mutex.lock();
-				T r;
-				if (!_queue.empty()) {
-					r = std::move(_queue.front());
-					_queue.pop(); // go ahead and pop it off, we've moved it
-				}
-				_mutex.unlock();
-				return r;
-			}
-		};
-
-		template <typename T, typename U, typename V = std::less<T>>
-		class locked_map {
-		private:
-			std::mutex _mutex;
-			std::map<T, U, V> _map;
-
-		public:
-			std::size_t erase(const T& n) {
-				_mutex.lock();
-				std::size_t r = _map.erase(n);
-				_mutex.unlock();
-				return r;
-			}
-
-			void upsert(const T& n, const U& v) {
-				_mutex.lock();
-				_map[n] = v;
-				_mutex.unlock();
-			}
-
-			void upsert(const T& n, std::function<void(U&)> f) {
-				_mutex.lock();
-				f(_map[n]);
-				_mutex.unlock();
-			}
-
-			T upsert_wrap(U& e, std::function<T(T)> f) {
-				_mutex.lock();
-				// C99, 6.2.5p9 -- guarantees that this will wrap to 0 once we reach max value
-				T position = f(_map.crbegin()->first);
-
-				_map[position] = e;
-				_mutex.unlock();
-
-				return position;
-			}
-
-			U get(const T& n) {
-				_mutex.lock();
-				U r; // it's default constructed
-				auto r_it = _map.find(n);
-				if (r_it != _map.end())
-					r = r_it->second;
-				_mutex.unlock();
-				return r;
-			}
-
-			bool contains(const T& n) {
-				_mutex.lock();
-				bool r = (_map.find(n) != _map.end());
-				_mutex.unlock();
-				return r;
-			}
-
-			std::set<T> keys() {
-				_mutex.lock();
-				std::set<T> r;
-				std::transform(_map.cbegin(), _map.cend(), std::inserter(r, r.begin()),
-					[](std::pair<T, U> key_val) -> T { return key_val.first; }
-				);
-				_mutex.unlock();
-
-				return r;
-			}
-
-			void foreach(std::function<void(std::pair<T, U>)> f) {
-				_mutex.lock();
-				for (auto it = _map.cbegin(); it != _map.cend(); ++it) {
-					f(*it);
-				}
-				_mutex.unlock();
-			}
-
-			void erase_if(const T& n, std::function<bool(U&)> f) {
-				_mutex.lock();
-				auto it = _map.find(n);
-				if (it != _map.end() && f(it->second)) {
-					_map.erase(it);
-				}
-				_mutex.unlock();
-			}
-
-			void erase_if(std::function<bool(std::pair<T, U>)> f) {
-				_mutex.lock();
-				for (auto it = _map.begin(); it != _map.end();) {
-					if (f(*it))
-						_map.erase(it);
-					else
-						++it;
-				}
-				_mutex.unlock();
-			}
-
-			std::map<T, U, V> copy() {
-				_mutex.lock();
-				std::map<T, U, V> r;
-				r.insert(_map.cbegin(), _map.cend());
-				_mutex.unlock();
-				return r;
-			}
-		};
-
-        locked_vector<std::function<bool(const std::string&, const std::string&)> > _enter_callbacks;
-        locked_vector<std::function<bool(const std::string&, const std::string&)> > _exit_callbacks;
-        locked_vector<std::function<bool(const std::string&, const std::string&)> > _join_callbacks;
-        locked_vector<std::function<bool(const std::string&, const std::string&)> > _leave_callbacks;
-
-        locked_map<std::string, std::string> _connected_peers; // peer_name, peer_uuid
-        locked_map<std::string, std::set<std::string> > _peer_groups; // group name, peer_names
-        locked_set<std::string> _own_groups; // group name
-
-        // I don't like this, but since zyre/czmq does the memory management for these, I should store these as raw pointers
-        zyre_t *_node;
-        zactor_t *_actor;
-
-        // command containers
-        locked_map<std::string, std::function<bool(std::stringstream&& args)> > _command_map; // callback name, callback
-        locked_queue<std::pair<std::string, std::stringstream> > _command_queue; // pair callback name, callback
-
-        locked_set<unsigned char> _response_keys; // ordered number of responses
-
-        struct Query final {
-            std::string query;
-            unsigned __int64 benchmark;
-            unsigned __int64 last;
-
-            //Benchmarks[bmParseMacroParameter];
-
-            Query() = default;
-            Query(const std::string& query) : query(query), benchmark(0), last(0) {}
-
-            // let's do some copy and swap for a bit of easy optimization
-            friend void swap(Query& left, Query& right) {
-                using std::swap;
-                swap(left.query, right.query);
-                swap(left.benchmark, right.benchmark);
-                swap(left.last, right.last);
-            }
-
-            Query(const Query& other) : query(other.query), benchmark(other.benchmark), last(other.last) {}
-            Query(Query&& other) noexcept : query(std::move(other.query)), benchmark(std::move(other.benchmark)), last(std::move(other.last)) {}
-            Query& operator=(Query rhs) { swap(*this, rhs); return *this; }
-        };
-
-        struct Observed final {
-            std::string query;
-            std::string name;
-
-            Observed() = default;
-            Observed(const std::string& query, const std::string& name) : query(query), name(name) {}
-
-            friend void swap(Observed& left, Observed& right) {
-                using std::swap;
-                swap(left.query, right.query);
-                swap(left.name, right.name);
-            }
-
-            Observed(const Observed& other) : query(other.query), name(other.name) {}
-            Observed(Observed&& other) noexcept : query(std::move(other.query)), name(std::move(other.name)) {}
-            Observed& operator=(Observed rhs) { swap(*this, rhs); return *this; }
-        };
-
-        struct ObservedCompare final {
-            bool operator() (const Observed& lhs, const Observed& rhs) const {
-                if (lhs.query != rhs.query)
-                    return lhs.query < rhs.query;
-                else
-                    return lhs.name < rhs.name;
-            }
-        };
-
-        locked_map<unsigned int, Query> _observer_map; // group number, query
-        locked_map<Observed, std::string, ObservedCompare> _observed_map; // maps query to group (for data access)
-        locked_map<std::string, Observation> _observed_data; // maps group to query result (could be empty)
-
-        static void node_actor(zsock_t *pipe, void *args);
-        const std::string observer_group(const unsigned int key);
-        void queue_command(const std::string& command, std::stringstream&& args);
-
-        std::string _current_query; // for the Query data member
-        Observation _query_result;
-
-        locked_set<std::string> _rejoin_groups;
-
-        bool _debugging;
-        bool _local_echo;
-        bool _command_echo;
-        bool _full_names;
-        bool _front_delimiter;
-        unsigned int _observe_delay;
-        unsigned int _keepalive;
-		unsigned __int64 _last_group_check;
-
-        // explicitly prevent copy/move operations.
-        Node(const Node&) = delete;
-        Node& operator=(const Node&) = delete;
-        Node(Node&&) = delete;
-        Node& operator=(Node&&) = delete;
-
-        Node();
-        ~Node();
-
-        // this is a private helper function ONLY THE STATIC ACTOR FUNCTION SHOULD CALL THIS
-        std::string peer_uuid(const std::string& name) {
-            std::string full_name = get_full_name(name);
-            std::string uuid;
-            zlist_t* peers = zyre_peers(_node);
-
-            if (peers) {
-                const char* z_peer = reinterpret_cast<const char*>(zlist_first(peers));
-                while (z_peer) {
-                    std::string peer_name(zyre_peer_header_value(_node, z_peer, "name"));
-                    if (full_name == peer_name) {
-                        uuid = z_peer;
-                        break;
-                    }
-
-                    z_peer = reinterpret_cast<const char*>(zlist_next(peers));
+class Node final {
+public:
+    MQ2DANNET_NODE_API static Node& get();
+
+    MQ2DANNET_NODE_API void join(const std::string& group);
+    MQ2DANNET_NODE_API void leave(const std::string& group);
+
+    MQ2DANNET_NODE_API void on_join(std::function<bool(const std::string&, const std::string&)> callback);
+    MQ2DANNET_NODE_API void on_leave(std::function<bool(const std::string&, const std::string&)> callback);
+
+    template <typename T, typename... Args>
+    void whisper(const std::string& recipient, Args&&... args) {
+        std::stringstream arg_stream = pack<T>(recipient, std::forward<Args>(args)...);
+        respond(recipient, name<T>(), std::move(arg_stream));
+    }
+
+    template <typename T, typename... Args>
+    void shout(const std::string& group, Args&&... args) {
+        std::stringstream arg_stream = pack<T>(group, std::forward<Args>(args)...);
+        publish(group, name<T>(), std::move(arg_stream));
+    }
+
+    MQ2DANNET_NODE_API const std::list<std::string> get_info();
+    MQ2DANNET_NODE_API const std::set<std::string> get_peers();
+    MQ2DANNET_NODE_API const std::set<std::string> get_all_groups();
+    MQ2DANNET_NODE_API const std::set<std::string> get_own_groups();
+    MQ2DANNET_NODE_API const std::map<std::string, std::set<std::string>> get_group_peers();
+    MQ2DANNET_NODE_API const std::set<std::string> get_group_peers(const std::string& group);
+    MQ2DANNET_NODE_API const std::set<std::string> get_peer_groups(const std::string& peer);
+    MQ2DANNET_NODE_API const std::string get_interfaces();
+    MQ2DANNET_NODE_API const std::string get_full_name(const std::string& name);
+    MQ2DANNET_NODE_API const std::string get_short_name(const std::string& name);
+    MQ2DANNET_NODE_API const std::string get_name(const std::string& name);
+
+    // quick helper function to safely init strings from chars
+    MQ2DANNET_NODE_API static std::string init_string(const char* szStr);
+
+    template <typename T>
+    static const std::string name() { return T::name(); }
+
+    template <typename T>
+    static const std::function<bool(std::stringstream&&)> callback() {
+        return T::callback;
+    }
+
+    // we gotta trust that copy elision works here, which it should in c++14 or more for stringstream.
+    // worst case is a slightly slower command because we have to copy the stream
+    template <typename T, typename... Args>
+    static std::stringstream pack(Args&&... args) { return T::pack(std::forward<Args>(args)...); }
+
+    template <typename T>
+    void register_command() { register_command(name<T>(), callback<T>()); }
+
+    template <typename T>
+    void unregister_command() { unregister_command(name<T>()); }
+
+    // register custom commands (for responses)
+    void register_command(const std::string& name, std::function<bool(std::stringstream&&)> callback) { _command_map.upsert(name, callback); }
+    void unregister_command(const std::string& name) { _command_map.erase(name); }
+
+    // finds and inserts the next int key, returns `"response" + new_key`
+    // this is generated by the requester
+    MQ2DANNET_NODE_API std::string register_response(std::function<bool(std::stringstream&&)> callback);
+    MQ2DANNET_NODE_API void respond(const std::string& name, const std::string& cmd, std::stringstream&& args);
+
+    struct Observation final {
+        std::string output;
+        std::string data;
+        unsigned __int64 received;
+
+        Observation(const Observation& obs) : output(obs.output), data(obs.data), received(obs.received) {}
+        Observation(const std::string& output) : output(output), data("NULL"), received(0) {}
+        Observation(const std::string& output, const std::string& data, unsigned __int64 received) : output(output), data(data), received(received) {}
+        Observation() : output(), data("NULL"), received(0) {}
+    };
+
+    // finds query and returns the observation group, generates new group name if query not found
+    MQ2DANNET_NODE_API std::string register_observer(const std::string& group, const std::string& query);
+    MQ2DANNET_NODE_API void unregister_observer(const std::string& query);
+    MQ2DANNET_NODE_API void observe(const std::string& group, const std::string& name, const std::string& query);
+    MQ2DANNET_NODE_API void forget(const std::string& group);
+    MQ2DANNET_NODE_API void forget(const std::string& name, const std::string& query);
+    MQ2DANNET_NODE_API void forget_all(const std::string& name);
+    MQ2DANNET_NODE_API void update(const std::string& group, const std::string& data, const std::string& output);
+    MQ2DANNET_NODE_API const Observation read(const std::string& group);
+    MQ2DANNET_NODE_API const Observation read(const std::string& name, const std::string& query);
+    MQ2DANNET_NODE_API bool can_read(const std::string& name, const std::string& query);
+    MQ2DANNET_NODE_API size_t observed_count(const std::string& name);
+    MQ2DANNET_NODE_API std::set<std::string> observed_queries(const std::string& name);
+    MQ2DANNET_NODE_API size_t observer_count();
+    MQ2DANNET_NODE_API std::set<std::string> observer_queries();
+    MQ2DANNET_NODE_API std::set<std::string> observers(const std::string& query);
+    MQ2DANNET_NODE_API void publish(const std::string& group, const std::string& cmd, std::stringstream&& args);
+
+    template <typename T, typename... Args>
+    void publish(Args&&... args) {
+        std::map<unsigned int, Query> updated_values;
+
+        _observer_map.foreach ([this, &updated_values](std::pair<unsigned int, Query> observer) -> void {
+            auto tick = MQGetTickCount64();
+            if (tick - observer.second.last >= std::max<unsigned __int64>(10 * observer.second.benchmark, observe_delay())) { // wait at least a second between updates
+                std::string group = observer_group(observer.first);
+                std::string query_result = parse_query(observer.second.query);
+
+                if (!_query_map.contains(observer.second.query) || _query_map.get(observer.second.query) != query_result) {
+                    _query_map.upsert(observer.second.query, query_result);
+                    shout<T>(group, query_result, std::forward<Args>(args)...);
                 }
 
-                zlist_destroy(&peers);
+                Query new_query(observer.second.query);
+
+                auto proc_time = MQGetTickCount64() - tick;
+                if (observer.second.benchmark == 0)
+                    new_query.benchmark = proc_time;
+                else
+                    new_query.benchmark = static_cast<unsigned __int64>(0.5 * (observer.second.benchmark + proc_time));
+
+                new_query.last = tick;
+
+                updated_values[observer.first] = new_query;
             }
+        });
 
-            return uuid;
+        for (auto it = updated_values.begin(); it != updated_values.end(); ++it) {
+            _observer_map.upsert(it->first, it->second);
         }
+    }
 
+private:
+    std::string _node_name;
+
+    // we don't need anything crazy here, there is only a single actor so deadlocks won't be an issue (if we're not dumb about it)
+    template <typename T>
+    class locked_vector {
+    private:
+        std::mutex _mutex;
+        std::vector<T> _vector;
 
     public:
-        // IMPORTANT: these are not exposed as an API, this is on purpose! We need a single point of control for our node (this plugin)
-        std::string name() { return _node_name; }
-
-        bool has_peer(const std::string& peer) {
-            if (_node_name == get_full_name(peer))
-                return true;
-
-			return _connected_peers.contains(get_full_name(peer));
+        void push_back(T& e) {
+            _mutex.lock();
+            _vector.push_back(e);
+            _mutex.unlock();
         }
 
-        size_t peers() {
-            return get_peers().size();
+        void remove_if(std::function<bool(T)> f) {
+            _mutex.lock();
+            for (auto it = _vector.begin(); it != _vector.end();) {
+                if (f(*it))
+                    _vector.erase(it);
+                else
+                    ++it;
+            }
+            _mutex.unlock();
         }
-
-        bool is_in_group(const std::string& group) {
-            auto groups = get_own_groups();
-            return groups.find(group) != groups.end();
-        }
-
-        // smartly reads/sets/clears _current_query
-        Observation query(const std::string& output, const std::string& query);
-        Observation query();
-        void query_result(const Observation& obs);
-        std::string trim_query(const std::string& query);
-        std::string parse_query(const std::string& query);
-        MQ2TYPEVAR parse_response(const std::string& output, const std::string& data);
-        std::string peer_address(const std::string& name);
-
-        bool debugging(bool debugging) { _debugging = debugging; return _debugging; }
-        bool debugging() { return _debugging; }
-
-        bool local_echo(bool local_echo) { _local_echo = local_echo; return _local_echo; }
-        bool local_echo() { return _local_echo; }
-
-        bool command_echo(bool command_echo) { _command_echo = command_echo; return _command_echo; }
-        bool command_echo() { return _command_echo; }
-
-        bool full_names(bool full_names) { _full_names = full_names; return _full_names; }
-        bool full_names() { return _full_names; }
-
-        bool front_delimiter(bool front_delimiter) { _front_delimiter = front_delimiter; return _front_delimiter; }
-        bool front_delimiter() { return _front_delimiter; }
-
-        unsigned int observe_delay(unsigned int observe_delay) { _observe_delay = observe_delay; return _observe_delay; }
-        unsigned int observe_delay() { return _observe_delay; }
-
-        unsigned int keepalive(unsigned int keepalive) { _keepalive = keepalive; if (_actor) zstr_sendx(_actor, "KEEPALIVE", std::to_string(keepalive).c_str(), NULL); return _keepalive; }
-        unsigned int keepalive() { return _keepalive; }
-
-		unsigned __int64 last_group_check(unsigned __int64 last_group_check) { _last_group_check = last_group_check; return _last_group_check; }
-		unsigned __int64 last_group_check() { return _last_group_check; }
-
-        void save_channels();
-
-        void clear_saved_channels();
-
-        void enter();
-        void exit();
-        void startup();
-        void set_timeout(int timeout);
-        void shutdown();
-
-        void do_next();
     };
+
+    template <typename T>
+    class locked_set {
+    private:
+        std::mutex _mutex;
+        std::set<T> _set;
+
+    public:
+        std::set<T> copy() {
+            _mutex.lock();
+            std::set<T> r;
+            r.insert(_set.cbegin(), _set.cend());
+            _mutex.unlock();
+            return r;
+        }
+
+        void clear() {
+            _mutex.lock();
+            _set.clear();
+            _mutex.unlock();
+        }
+
+        void emplace(T e) {
+            _mutex.lock();
+            _set.emplace(e);
+            _mutex.unlock();
+        }
+
+        void erase(T e) {
+            _mutex.lock();
+            _set.erase(e);
+            _mutex.unlock();
+        }
+
+        T get_next(std::function<T(T)> f) {
+            _mutex.lock();
+            T r = f(*(_set.crbegin()));
+            _mutex.unlock();
+            return r;
+        }
+
+        void insert(T& e) {
+            _mutex.lock();
+            _set.insert(e);
+            _mutex.unlock();
+        }
+    };
+
+    template <typename T>
+    class locked_queue {
+    private:
+        std::mutex _mutex;
+        std::deque<T> _queue;
+
+    public:
+        //emplace empty front pop
+        void emplace(T& e) {
+            _mutex.lock();
+            _queue.emplace_front(std::move(e));
+            _mutex.unlock();
+        }
+
+        T pop() {
+            _mutex.lock();
+            T r;
+            if (!_queue.empty()) {
+                r = std::move(_queue.front());
+                _queue.pop_front(); // go ahead and pop it off, we've moved it
+            }
+            _mutex.unlock();
+            return r;
+        }
+
+        void remove_if(const std::function<bool(T&)>& f) {
+            _mutex.lock();
+            std::remove_if(_queue.begin(), _queue.end(), f);
+            _mutex.unlock();
+        }
+    };
+
+    template <typename T, typename U, typename V = std::less<T>>
+    class locked_map {
+    private:
+        std::mutex _mutex;
+        std::map<T, U, V> _map;
+
+    public:
+        std::size_t erase(const T& n) {
+            _mutex.lock();
+            std::size_t r = _map.erase(n);
+            _mutex.unlock();
+            return r;
+        }
+
+        void upsert(const T& n, const U& v) {
+            _mutex.lock();
+            _map[n] = v;
+            _mutex.unlock();
+        }
+
+        void upsert(const T& n, std::function<void(U&)> f) {
+            _mutex.lock();
+            f(_map[n]);
+            _mutex.unlock();
+        }
+
+        T upsert_wrap(U& e, std::function<T(T)> f) {
+            _mutex.lock();
+            // C99, 6.2.5p9 -- guarantees that this will wrap to 0 once we reach max value
+            T position = f(_map.crbegin()->first);
+
+            _map[position] = e;
+            _mutex.unlock();
+
+            return position;
+        }
+
+        U get(const T& n) {
+            _mutex.lock();
+            U r; // it's default constructed
+            auto r_it = _map.find(n);
+            if (r_it != _map.end())
+                r = r_it->second;
+            _mutex.unlock();
+            return r;
+        }
+
+        bool contains(const T& n) {
+            _mutex.lock();
+            bool r = (_map.find(n) != _map.end());
+            _mutex.unlock();
+            return r;
+        }
+
+        std::set<T, V> keys() {
+            _mutex.lock();
+            std::set<T, V> r;
+            std::transform(_map.cbegin(), _map.cend(), std::inserter(r, r.begin()),
+                [](std::pair<T, U> key_val) -> T { return key_val.first; });
+            _mutex.unlock();
+
+            return r;
+        }
+
+        std::list<U> values() {
+            _mutex.lock();
+            std::list<U> r;
+            std::transform(_map.cbegin(), _map.cend(), std::inserter(r, r.begin()),
+                [](std::pair<T, U> key_val) -> U { return key_val.second; });
+            _mutex.unlock();
+
+            return r;
+        }
+
+        void foreach (std::function<void(std::pair<T, U>)> f) {
+            _mutex.lock();
+            for (auto it = _map.begin(); it != _map.end(); ++it) {
+                f(*it);
+            }
+            _mutex.unlock();
+        }
+
+        void erase_if(const T& n, std::function<bool(U&)> f) {
+            _mutex.lock();
+            auto it = _map.find(n);
+            if (it != _map.end() && f(it->second)) {
+                _map.erase(it);
+            }
+            _mutex.unlock();
+        }
+
+        void erase_if(std::function<bool(std::pair<T, U>)> f) {
+            _mutex.lock();
+            for (auto it = _map.begin(); it != _map.end();) {
+                if (f(*it))
+                    _map.erase(it);
+                else
+                    ++it;
+            }
+            _mutex.unlock();
+        }
+
+        std::map<T, U, V> copy() {
+            _mutex.lock();
+            std::map<T, U, V> r;
+            r.insert(_map.cbegin(), _map.cend());
+            _mutex.unlock();
+            return r;
+        }
+    };
+
+    locked_vector<std::function<bool(const std::string&, const std::string&)>> _enter_callbacks;
+    locked_vector<std::function<bool(const std::string&, const std::string&)>> _exit_callbacks;
+    locked_vector<std::function<bool(const std::string&, const std::string&)>> _join_callbacks;
+    locked_vector<std::function<bool(const std::string&, const std::string&)>> _leave_callbacks;
+
+    locked_map<std::string, std::string> _connected_peers;       // peer_name, peer_uuid
+    locked_map<std::string, std::set<std::string>> _peer_groups; // group name, peer_names
+    locked_set<std::string> _own_groups;                         // group name
+
+    // I don't like this, but since zyre/czmq does the memory management for these, I should store these as raw pointers
+    zyre_t* _node;
+    zactor_t* _actor;
+    zpoller_t* _poller;
+
+    // command containers
+    locked_map<std::string, std::function<bool(std::stringstream&& args)>> _command_map; // callback name, callback
+    locked_queue<std::pair<std::string, std::stringstream>> _command_queue;              // pair callback name, callback
+    locked_map<std::string, std::string> _query_map;                                     // query, result
+
+    locked_set<unsigned char> _response_keys; // ordered number of responses
+
+    struct Query final {
+        std::string query;
+        unsigned __int64 benchmark;
+        unsigned __int64 last;
+
+        //Benchmarks[bmParseMacroParameter];
+
+        Query() = default;
+        Query(const std::string& query) : query(query), benchmark(0), last(0) {}
+
+        // let's do some copy and swap for a bit of easy optimization
+        friend void swap(Query& left, Query& right) {
+            using std::swap;
+            swap(left.query, right.query);
+            swap(left.benchmark, right.benchmark);
+            swap(left.last, right.last);
+        }
+
+        Query(const Query& other) : query(other.query), benchmark(other.benchmark), last(other.last) {}
+        Query(Query&& other) noexcept : query(std::move(other.query)), benchmark(std::move(other.benchmark)), last(std::move(other.last)) {}
+        Query& operator=(Query rhs) {
+            swap(*this, rhs);
+            return *this;
+        }
+    };
+
+    struct Observed final {
+        std::string query;
+        std::string name;
+
+        Observed() = default;
+        Observed(const std::string& query, const std::string& name) : query(query), name(name) {}
+
+        friend void swap(Observed& left, Observed& right) {
+            using std::swap;
+            swap(left.query, right.query);
+            swap(left.name, right.name);
+        }
+
+        Observed(const Observed& other) : query(other.query), name(other.name) {}
+        Observed(Observed&& other) noexcept : query(std::move(other.query)), name(std::move(other.name)) {}
+        Observed& operator=(Observed rhs) {
+            swap(*this, rhs);
+            return *this;
+        }
+    };
+
+    struct ObservedCompare final {
+        bool operator()(const Observed& lhs, const Observed& rhs) const {
+            if (lhs.query != rhs.query)
+                return lhs.query < rhs.query;
+            else
+                return lhs.name < rhs.name;
+        }
+    };
+
+    locked_map<unsigned int, Query> _observer_map;                    // group number, query
+    locked_map<Observed, std::string, ObservedCompare> _observed_map; // maps query to group (for data access)
+    locked_map<std::string, Observation> _observed_data;              // maps group to query result (could be empty)
+
+    static void node_actor(zsock_t* pipe, void* args);
+    const std::string observer_group(const unsigned int key);
+    void queue_command(const std::string& command, std::stringstream&& args);
+
+    std::string _current_query; // for the Query data member
+    Observation _query_result;
+
+    locked_set<std::string> _rejoin_groups;
+
+    bool _debugging;
+    bool _local_echo;
+    bool _command_echo;
+    bool _full_names;
+    bool _front_delimiter;
+    unsigned int _observe_delay;
+    unsigned int _keepalive;
+    unsigned int _evasive;
+    unsigned int _expired;
+    unsigned __int64 _last_group_check;
+
+    // explicitly prevent copy/move operations.
+    Node(const Node&) = delete;
+    Node& operator=(const Node&) = delete;
+    Node(Node&&) = delete;
+    Node& operator=(Node&&) = delete;
+
+    Node();
+    ~Node();
+
+    // this is a private helper function ONLY THE STATIC ACTOR FUNCTION SHOULD CALL THIS
+    std::string peer_uuid(const std::string& name) {
+        std::string full_name = get_full_name(name);
+        std::string uuid;
+        zlist_t* peers = zyre_peers(_node);
+
+        if (peers) {
+            const char* z_peer = reinterpret_cast<const char*>(zlist_first(peers));
+            while (z_peer) {
+                std::string peer_name(zyre_peer_header_value(_node, z_peer, "name"));
+                if (full_name == peer_name) {
+                    uuid = z_peer;
+                    break;
+                }
+
+                z_peer = reinterpret_cast<const char*>(zlist_next(peers));
+            }
+
+            zlist_destroy(&peers);
+        }
+
+        return uuid;
+    }
+
+
+public:
+    // IMPORTANT: these are not exposed as an API, this is on purpose! We need a single point of control for our node (this plugin)
+    std::string name() { return _node_name; }
+
+    bool has_peer(const std::string& peer) {
+        if (_node_name == get_full_name(peer))
+            return true;
+
+        return _connected_peers.contains(get_full_name(peer));
+    }
+
+    size_t peers() {
+        return get_peers().size();
+    }
+
+    bool is_in_group(const std::string& group) {
+        auto groups = get_own_groups();
+        return groups.find(group) != groups.end();
+    }
+
+    // smartly reads/sets/clears _current_query
+    Observation query(const std::string& output, const std::string& query);
+    Observation query();
+    void query_result(const Observation& obs);
+    std::string trim_query(const std::string& query);
+    std::string parse_query(const std::string& query);
+    MQ2TYPEVAR parse_response(const std::string& output, const std::string& data);
+    std::string peer_address(const std::string& name);
+
+    bool debugging(bool debugging) {
+        _debugging = debugging;
+        return _debugging;
+    }
+    bool debugging() { return _debugging; }
+
+    bool local_echo(bool local_echo) {
+        _local_echo = local_echo;
+        return _local_echo;
+    }
+    bool local_echo() { return _local_echo; }
+
+    bool command_echo(bool command_echo) {
+        _command_echo = command_echo;
+        return _command_echo;
+    }
+    bool command_echo() { return _command_echo; }
+
+    bool full_names(bool full_names) {
+        _full_names = full_names;
+        return _full_names;
+    }
+    bool full_names() { return _full_names; }
+
+    bool front_delimiter(bool front_delimiter) {
+        _front_delimiter = front_delimiter;
+        return _front_delimiter;
+    }
+    bool front_delimiter() { return _front_delimiter; }
+
+    unsigned int observe_delay(unsigned int observe_delay) {
+        _observe_delay = observe_delay;
+        return _observe_delay;
+    }
+    unsigned int observe_delay() { return _observe_delay; }
+
+    unsigned int keepalive(unsigned int keepalive) {
+        _keepalive = keepalive;
+        if (_actor)
+            zstr_sendx(_actor, "KEEPALIVE", std::to_string(keepalive).c_str(), NULL);
+        return _keepalive;
+    }
+    unsigned int keepalive() { return _keepalive; }
+
+    unsigned int evasive(unsigned int evasive) {
+        _evasive = evasive;
+        if (_actor)
+            zstr_sendx(_actor, "EVASIVE", std::to_string(evasive).c_str(), NULL);
+        return _evasive;
+    }
+    unsigned int evasive() { return _evasive; }
+
+    unsigned int expired(unsigned int expired) {
+        _expired = expired;
+        if (_actor)
+            zstr_sendx(_actor, "EXPIRED", std::to_string(expired).c_str(), NULL);
+        return _expired;
+    }
+    unsigned int expired() { return _expired; }
+
+    unsigned __int64 last_group_check(unsigned __int64 last_group_check) {
+        _last_group_check = last_group_check;
+        return _last_group_check;
+    }
+    unsigned __int64 last_group_check() { return _last_group_check; }
+
+    void save_channels();
+
+    void clear_saved_channels();
+
+    void enter();
+    void exit();
+    void startup();
+    void set_timeout(int timeout);
+    void shutdown();
+    void recv();
+
+    void do_next();
+    void remove_commands(const std::function<bool(std::pair<std::string, std::stringstream>&)>& f);
+};
 }
 
 #pragma endregion
@@ -589,16 +686,16 @@ namespace MQ2DanNet {
 #pragma region CommandDefs
 
 namespace MQ2DanNet {
-    COMMAND(Echo, const std::string& message);
+COMMAND(Echo, const std::string& message);
 
-    COMMAND(Execute, const std::string& command);
+COMMAND(Execute, const std::string& command);
 
-    // NOTE: Query is asynchronous
-    COMMAND(Query, const std::string& request);
+// NOTE: Query is asynchronous
+COMMAND(Query, const std::string& request);
 
-    COMMAND(Observe, const std::string& query, const std::string& output);
+COMMAND(Observe, const std::string& query, const std::string& output);
 
-    COMMAND(Update, const std::string& query);
+COMMAND(Update, const std::string& result);
 }
 
 #pragma endregion
@@ -646,12 +743,12 @@ MQ2DANNET_NODE_API void Node::publish(const std::string& group, const std::strin
     size_t args_size = (size_t)args.tellg();
     args.seekg(0, args.beg);
 
-    char *args_buf = new char[args_size];
+    char* args_buf = new char[args_size];
     args.read(args_buf, args_size);
 
-    zframe_t *args_frame = zframe_new(args_buf, args_size);
+    zframe_t* args_frame = zframe_new(args_buf, args_size);
 
-    zmsg_t *msg = zmsg_new();
+    zmsg_t* msg = zmsg_new();
     zmsg_prepend(msg, &args_frame);
     zmsg_pushstr(msg, cmd.c_str());
 
@@ -671,12 +768,12 @@ MQ2DANNET_NODE_API void Node::respond(const std::string& name, const std::string
     size_t args_size = (size_t)args.tellg();
     args.seekg(0, args.beg);
 
-    char *args_buf = new char[args_size];
+    char* args_buf = new char[args_size];
     args.read(args_buf, args_size);
 
-    zframe_t *args_frame = zframe_new(args_buf, args_size);
+    zframe_t* args_frame = zframe_new(args_buf, args_size);
 
-    zmsg_t *msg = zmsg_new();
+    zmsg_t* msg = zmsg_new();
     zmsg_prepend(msg, &args_frame);
     zmsg_pushstr(msg, cmd.c_str());
 
@@ -690,9 +787,9 @@ MQ2DANNET_NODE_API void Node::respond(const std::string& name, const std::string
 
 MQ2DANNET_NODE_API const std::list<std::string> Node::get_info() {
     if (!_actor)
-		return std::list<std::string> { "NONET" };
+        return std::list<std::string>{ "NONET" };
 
-	std::list<std::string> output;
+    std::list<std::string> output;
     std::set<std::string> groups = get_own_groups();
     output.push_back("CHANNELS: ");
     auto group_peers = get_group_peers();
@@ -701,12 +798,12 @@ MQ2DANNET_NODE_API const std::list<std::string> Node::get_info() {
         if (group.first.find_first_of('_') != std::string::npos && std::isdigit(group.first.back()))
             continue;
 
-		std::stringstream output_stream;
+        std::stringstream output_stream;
 
         if (groups.find(group.first) != groups.end()) {
-			output_stream << " :: \ax\ag" << group.first << "\ax" << std::endl;
+            output_stream << " :: \ax\ag" << group.first << "\ax" << std::endl;
         } else {
-			output_stream << " :: \ax\a-g" << group.first << "\ax" << std::endl;
+            output_stream << " :: \ax\a-g" << group.first << "\ax" << std::endl;
         }
 
         for (auto peer : group.second) {
@@ -719,10 +816,10 @@ MQ2DANNET_NODE_API const std::list<std::string> Node::get_info() {
             output_stream << peer_out << "\ax ";
         }
 
-		output.push_back(output_stream.str());
+        output.push_back(output_stream.str());
     }
 
-	return output;
+    return output;
 }
 
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peers() {
@@ -734,7 +831,7 @@ MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peers() {
 
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_all_groups() {
     std::set<std::string> groups = _peer_groups.keys();
-	std::set<std::string> own_groups = _own_groups.copy();
+    std::set<std::string> own_groups = _own_groups.copy();
     groups.insert(own_groups.cbegin(), own_groups.cend());
 
     return groups;
@@ -745,7 +842,7 @@ MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_own_groups()
 }
 
 MQ2DANNET_NODE_API const std::map<std::string, std::set<std::string>> MQ2DanNet::Node::get_group_peers() {
-    std::map<std::string, std::set<std::string> > group_peers;
+    std::map<std::string, std::set<std::string>> group_peers;
 
     std::set<std::string> groups = get_all_groups();
     for (auto group : groups) {
@@ -765,23 +862,40 @@ MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_group_peers(
 }
 
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peer_groups(const std::string& peer) {
-	std::set<std::string> groups;
+    std::set<std::string> groups;
 
-	_peer_groups.foreach([&groups, peer](std::pair<std::string, std::set<std::string>> p) -> void {
-		if (p.second.find(peer) != p.second.end()) groups.emplace(p.first);
-	});
+    _peer_groups.foreach ([&groups, peer](std::pair<std::string, std::set<std::string>> p) -> void {
+        if (p.second.find(peer) != p.second.end())
+            groups.emplace(p.first);
+    });
 
-	return groups;
+    return groups;
 }
 
 MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_interfaces() {
-    ziflist_t *l = ziflist_new();
-    std::string ifaces = ziflist_first(l);
-    while (auto iface = ziflist_next(l)) {
-        ifaces += "\r\n";
-        ifaces += iface;
+    const char* const current_iface = zsys_interface();
+    const unsigned int current_iface_idx = (strlen(current_iface) == 1 && current_iface[0] >= '0' && current_iface[0] <= '9') ? atoi(current_iface) : strlen(current_iface) == 0 ? 0 : -1;
+
+    ziflist_t* l = ziflist_new_ipv6();
+    std::string ifaces;
+
+    const char* iface = ziflist_first(l);
+    int iface_idx = -1;
+    while (iface) {
+        ++iface_idx;
+
+        if ((ziflist_is_ipv6(l) && !zsys_ipv6()) || (!ziflist_is_ipv6(l) && zsys_ipv6()))
+            continue;
+
+        std::stringstream ifacestream;
+        if ((current_iface_idx >= 0 && current_iface_idx == iface_idx) || streq(current_iface, iface))
+            ifacestream << " --> ";
+        else
+            ifacestream << "     ";
+        ifacestream << iface_idx << " [" << iface << "] " << ziflist_address(l) << " -- " << ziflist_broadcast(l) << "\r\n";
+        ifaces += ifacestream.str();
+        iface = ziflist_next(l);
     }
-    
     ziflist_destroy(&l);
 
     return ifaces;
@@ -790,7 +904,7 @@ MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_interfaces() {
 MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_full_name(const std::string& name) {
     std::string ret = name;
 
-    // this works because names and servers can't have underscores in them, therefore if 
+    // this works because names and servers can't have underscores in them, therefore if
     // there is no underscore in the string, we assume a local character name was passed
     if (std::string::npos == name.find_last_of("_")) {
         ret = EQADDR_SERVERNAME + std::string("_") + ret;
@@ -800,30 +914,32 @@ MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_full_name(const std::s
 }
 
 MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_short_name(const std::string& name) {
-	std::string ret = name;
-	size_t pos = name.find_last_of("_");
+    std::string ret = name;
+    size_t pos = name.find_last_of("_");
 
-	if (pos != std::string::npos && name.find_first_of(EQADDR_SERVERNAME) != std::string::npos) {
-		ret = name.substr(pos + 1);
-	}
+    if (pos != std::string::npos && name.find_first_of(EQADDR_SERVERNAME) != std::string::npos) {
+        ret = name.substr(pos + 1);
+    }
 
-	return init_string(ret.c_str());
+    return init_string(ret.c_str());
 }
 
 MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_name(const std::string& name) {
-	if (full_names()) {
-		return get_full_name(name);
-	} else {
-		return get_short_name(name);
-	}
+    if (full_names()) {
+        return get_full_name(name);
+    } else {
+        return get_short_name(name);
+    }
 }
 
-void Node::node_actor(zsock_t *pipe, void *args) {
-    Node *node = reinterpret_cast<Node*>(args);
-    if (!node) return;
+void Node::node_actor(zsock_t* pipe, void* args) {
+    Node* node = reinterpret_cast<Node*>(args);
+    if (!node)
+        return;
 
     node->_node = zyre_new(node->_node_name.c_str());
-    if (!node->_node) throw new std::invalid_argument("Could not create node");
+    if (!node->_node)
+        throw new std::invalid_argument("Could not create node");
 
     CHAR szBuf[MAX_STRING] = { 0 };
     GetPrivateProfileString("General", "Interface", NULL, szBuf, MAX_STRING, INIFileName);
@@ -833,17 +949,22 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     // send our node name for easier name recognition
     zyre_set_header(node->_node, "name", "%s", node->_node_name.c_str());
     zyre_start(node->_node);
-    zyre_set_expired_timeout(node->_node, node->keepalive());
+    if (node->evasive() > 0)
+        zyre_set_evasive_timeout(node->_node, node->evasive());
+    if (node->expired() > 0)
+        zyre_set_expired_timeout(node->_node, node->expired());
+    unsigned int keepalive = node->keepalive() > 0 ? node->keepalive() : 30000;
 
     zsock_signal(pipe, 0); // ready signal, required by zactor contract
-    
+
     auto my_sock = zyre_socket(node->_node);
-    zpoller_t *poller = zpoller_new(pipe, my_sock, (void*)NULL);
+    zpoller_t* poller = zpoller_new(pipe, my_sock, (void*)NULL);
 
     std::set<std::string> groups = node->_rejoin_groups.copy();
     node->_rejoin_groups.clear();
 
     for (auto group : groups) {
+        node->_own_groups.emplace(group);
         zyre_join(node->_node, group.c_str());
     }
 
@@ -854,50 +975,56 @@ void Node::node_actor(zsock_t *pipe, void *args) {
 
     bool terminated = false;
     while (!terminated) {
-        void *which = zpoller_wait(poller, -1);
+        void* which = zpoller_wait(poller, keepalive);
 
         bool did_expire = zpoller_expired(poller);
         bool did_terminate = zpoller_terminated(poller);
 
-		if (!which || !pipe || !node || !node->_node) {
-			terminated = true;
-		} else if (which == pipe) {
+        if (did_expire) {
+            zsock_signal(pipe, 0);
+            int rc = zsock_wait(pipe);
+            if (rc != 0)
+                terminated = true;
+        } else if (!which || !pipe || !node || !node->_node || did_terminate) {
+            terminated = true;
+        } else if (which == pipe) {
             // we've got a command from the caller here
             //DebugSpewAlways("Got message from caller");
-            zmsg_t *msg = zmsg_recv(which);
-            if (!msg) break; // Interrupted
+            zmsg_t* msg = zmsg_recv(which);
+            if (!msg)
+                break; // Interrupted
 
             // strings index commands because zeromq has the infrastructure and it's not time-critical
             // otherwise, we'd have to deal with byte streams, which is totally unnecessary
-            char *command = zmsg_popstr(msg);
+            char* command = zmsg_popstr(msg);
 
-            DebugSpewAlways("MQ2DanNet: command: %s", command);
+            //DebugSpewAlways("MQ2DanNet: command: %s", command);
 
             // IMPORTANT: local commands are all caps, Remote commands will be passed to this as their class name
             if (streq(command, "$TERM")) { // need to handle $TERM per zactor contract
                 terminated = true;
             } else if (streq(command, "JOIN")) {
-                char *group = zmsg_popstr(msg);
+                char* group = zmsg_popstr(msg);
                 if (group) {
                     node->_own_groups.emplace(group);
                     zyre_join(node->_node, group);
                     zstr_free(&group);
                 }
             } else if (streq(command, "LEAVE")) {
-                char *group = zmsg_popstr(msg);
+                char* group = zmsg_popstr(msg);
                 if (group) {
                     node->_own_groups.erase(group);
                     zyre_leave(node->_node, group);
                     zstr_free(&group);
                 }
             } else if (streq(command, "SHOUT")) {
-                char *group = zmsg_popstr(msg);
+                char* group = zmsg_popstr(msg);
                 if (group) {
                     zyre_shout(node->_node, group, &msg);
                     zstr_free(&group);
                 }
             } else if (streq(command, "WHISPER")) {
-                char *name = zmsg_popstr(msg);
+                char* name = zmsg_popstr(msg);
                 if (name) {
                     std::string uuid = node->peer_uuid(name);
                     zstr_free(&name);
@@ -905,7 +1032,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                         zyre_whisper(node->_node, uuid.c_str(), &msg);
                 }
             } else if (streq(command, "PEER")) {
-                char *name = zmsg_popstr(msg);
+                char* name = zmsg_popstr(msg);
                 std::string uuid;
                 if (name) {
                     uuid = node->peer_uuid(name);
@@ -915,25 +1042,27 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 zstr_send(pipe, uuid.c_str());
             } else if (streq(command, "PEERS")) {
                 zlist_t* peer_ids = zyre_peers(node->_node);
-                zmsg_t *peers = zmsg_new();
+                zmsg_t* peers = zmsg_new();
                 if (peer_ids) {
-                    const char *peer_id = reinterpret_cast<const char*>(zlist_first(peer_ids));
+                    const char* peer_id = reinterpret_cast<const char*>(zlist_first(peer_ids));
                     while (peer_id) {
-                        char *name = zyre_peer_header_value(node->_node, peer_id, "name");
-                        if (name) zmsg_pushstr(peers, name);
+                        char* name = zyre_peer_header_value(node->_node, peer_id, "name");
+                        if (name)
+                            zmsg_pushstr(peers, name);
                         peer_id = reinterpret_cast<const char*>(zlist_next(peer_ids));
                     }
 
                     zlist_destroy(&peer_ids);
                 }
 
-                if (zmsg_size(peers) == 0) zmsg_pushstr(peers, "0");
+                if (zmsg_size(peers) == 0)
+                    zmsg_pushstr(peers, "0");
                 zmsg_send(&peers, pipe);
             } else if (streq(command, "PEER_GROUPS")) {
                 zlist_t* peer_groups = zyre_peer_groups(node->_node);
-                zmsg_t *groups = zmsg_new();
+                zmsg_t* groups = zmsg_new();
                 if (peer_groups) {
-                    const char *peer_group = reinterpret_cast<const char *>(zlist_first(peer_groups));
+                    const char* peer_group = reinterpret_cast<const char*>(zlist_first(peer_groups));
                     while (peer_group) {
                         zmsg_pushstr(groups, peer_group);
                         peer_group = reinterpret_cast<const char*>(zlist_next(peer_groups));
@@ -942,13 +1071,14 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                     zlist_destroy(&peer_groups);
                 }
 
-                if (zmsg_size(groups) == 0) zmsg_pushstr(groups, "");
+                if (zmsg_size(groups) == 0)
+                    zmsg_pushstr(groups, "");
                 zmsg_send(&groups, pipe);
             } else if (streq(command, "OWN_GROUPS")) {
                 zlist_t* own_groups = zyre_own_groups(node->_node);
-                zmsg_t *groups = zmsg_new();
+                zmsg_t* groups = zmsg_new();
                 if (own_groups) {
-                    const char *peer_group = reinterpret_cast<const char *>(zlist_first(own_groups));
+                    const char* peer_group = reinterpret_cast<const char*>(zlist_first(own_groups));
                     while (peer_group) {
                         zmsg_pushstr(groups, peer_group);
                         peer_group = reinterpret_cast<const char*>(zlist_next(own_groups));
@@ -957,17 +1087,18 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                     zlist_destroy(&own_groups);
                 }
 
-                if (zmsg_size(groups) == 0) zmsg_pushstr(groups, "");
+                if (zmsg_size(groups) == 0)
+                    zmsg_pushstr(groups, "");
                 zmsg_send(&groups, pipe);
             } else if (streq(command, "PEERS_BY_GROUP")) {
-                char *group = zmsg_popstr(msg);
-                zmsg_t *peers = zmsg_new();
+                char* group = zmsg_popstr(msg);
+                zmsg_t* peers = zmsg_new();
                 if (group) {
                     zlist_t* peer_ids = zyre_peers_by_group(node->_node, group);
                     if (peer_ids) {
-                        const char *peer_id = reinterpret_cast<const char*>(zlist_first(peer_ids));
+                        const char* peer_id = reinterpret_cast<const char*>(zlist_first(peer_ids));
                         while (peer_id) {
-                            char *name = zyre_peer_header_value(node->_node, peer_id, "name");
+                            char* name = zyre_peer_header_value(node->_node, peer_id, "name");
                             zmsg_pushstr(peers, name);
                             peer_id = reinterpret_cast<const char*>(zlist_next(peer_ids));
                         }
@@ -976,12 +1107,14 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                     }
                 }
 
-                if (group) zstr_free(&group);
-                if (zmsg_size(peers) == 0) zmsg_pushstr(peers, "");
+                if (group)
+                    zstr_free(&group);
+                if (zmsg_size(peers) == 0)
+                    zmsg_pushstr(peers, "");
                 zmsg_send(&peers, pipe);
             } else if (streq(command, "PEER_ADDRESS")) {
-                char *name = zmsg_popstr(msg);
-                zmsg_t *address = zmsg_new();
+                char* name = zmsg_popstr(msg);
+                zmsg_t* address = zmsg_new();
 
                 std::string uuid;
                 if (name) {
@@ -990,17 +1123,36 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 }
 
                 if (!uuid.empty()) {
-                    char *addr = zyre_peer_address(node->_node, uuid.c_str());
+                    char* addr = zyre_peer_address(node->_node, uuid.c_str());
                     if (addr) {
                         zmsg_pushstr(address, addr);
                         zstr_free(&addr);
                     }
                 }
 
-                if (zmsg_size(address) == 0) zmsg_pushstr(address, "");
+                if (zmsg_size(address) == 0)
+                    zmsg_pushstr(address, "");
                 zmsg_send(&address, pipe);
+            } else if (streq(command, "EVASIVE")) {
+                char* szEvasive = zmsg_popstr(msg);
+                if (IsNumber(szEvasive)) {
+                    zyre_set_evasive_timeout(node->_node, node->evasive());
+                } else if (szEvasive) {
+                    DebugSpewAlways("EVASIVE: Trying to set non-numeric %s.", szEvasive);
+                } else {
+                    DebugSpewAlways("EVASIVE: Trying to set null.");
+                }
+            } else if (streq(command, "EXPIRED")) {
+                char* szExpired = zmsg_popstr(msg);
+                if (IsNumber(szExpired)) {
+                    zyre_set_expired_timeout(node->_node, node->expired());
+                } else if (szExpired) {
+                    DebugSpewAlways("EXPIRED: Trying to set non-numeric %s.", szExpired);
+                } else {
+                    DebugSpewAlways("EXPIRED: Trying to set null.");
+                }
             } else if (streq(command, "KEEPALIVE")) {
-                char *szKeepalive = zmsg_popstr(msg);
+                char* szKeepalive = zmsg_popstr(msg);
                 if (IsNumber(szKeepalive)) {
                     zyre_set_expired_timeout(node->_node, atoi(szKeepalive));
                 } else if (szKeepalive) {
@@ -1009,42 +1161,49 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                     DebugSpewAlways("KEEPALIVE: Trying to set null.");
                 }
 
-                if (szKeepalive) zstr_free(&szKeepalive);
+                if (szKeepalive)
+                    zstr_free(&szKeepalive);
             } else if (streq(command, "PING")) {
                 zsock_signal(pipe, 0);
             } else {
-                zframe_t *body = zmsg_pop(msg);
-                char *name = zmsg_popstr(msg);
-                char *group = zmsg_popstr(msg);
+                zframe_t* body = zmsg_pop(msg);
+                char* name = zmsg_popstr(msg);
+                char* group = zmsg_popstr(msg);
 
-				if (body) {
-					std::stringstream args;
-					Archive<std::stringstream> args_ar(args);
-					args_ar << std::string(name ? name : "") << std::string(group ? group : "");
-					char *body_data = (char *)zframe_data(body);
-					size_t body_size = zframe_size(body);
+                if (body) {
+                    std::stringstream args;
+                    Archive<std::stringstream> args_ar(args);
+                    args_ar << std::string(name ? name : "") << std::string(group ? group : "");
+                    char* body_data = (char*)zframe_data(body);
+                    size_t body_size = zframe_size(body);
 
-					args.write(body_data, body_size);
+                    args.write(body_data, body_size);
 
-					node->queue_command(command, std::move(args));
-				} else {
-					DebugSpewAlways("MQ2DanNet: Empty %s message in pipe handler: group %s, name %s, body %s.", command, group, name, body);
-				}
+                    node->queue_command(command, std::move(args));
+                } else {
+                    DebugSpewAlways("MQ2DanNet: Empty %s message in pipe handler: group %s, name %s, body %s.", command, group, name, body);
+                }
 
-                if (group) zstr_free(&group);
-                if (name) zstr_free(&name);
-                if (body) zframe_destroy(&body);
+                if (group)
+                    zstr_free(&group);
+                if (name)
+                    zstr_free(&name);
+                if (body)
+                    zframe_destroy(&body);
             }
 
-            if (command) zstr_free(&command);
-            if (msg) zmsg_destroy(&msg);
+            if (command)
+                zstr_free(&command);
+            if (msg)
+                zmsg_destroy(&msg);
         } else if (which == zyre_socket(node->_node)) {
             // we've received something over our socket
             //DebugSpewAlways("Got a message over the socket");
-            zyre_event_t *z_event = zyre_event_new(node->_node);
-            if (!z_event) break;
+            zyre_event_t* z_event = zyre_event_new(node->_node);
+            if (!z_event)
+                break;
 
-            const char *szEventType = zyre_event_type(z_event);
+            const char* szEventType = zyre_event_type(z_event);
             std::string event_type(szEventType ? szEventType : ""); // don't use init_string() because we don't want to make lower
             std::string name = init_string(zyre_event_peer_name(z_event));
 
@@ -1059,29 +1218,39 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 if (uuid.empty()) {
                     DebugSpewAlways("MQ2DanNet: ENTER with empty UUID for name %s, will not add to peers list.", name.c_str());
                 } else {
-					node->_connected_peers.upsert(name, uuid);
+                    node->_connected_peers.upsert(name, uuid);
                 }
-                DebugSpewAlways("%s is ENTERing.", name.c_str());
+                //DebugSpewAlways("%s is ENTERing.", name.c_str());
             } else if (event_type == "EXIT") {
                 node->_connected_peers.erase(name);
-				node->_peer_groups.foreach([&name](std::pair<std::string, std::set<std::string>> group) -> void {
-					group.second.erase(name);
-				});
-                DebugSpewAlways("%s is EXITing.", name.c_str());
+
+                std::map<std::string, std::set<std::string>> new_groups;
+                node->_peer_groups.foreach ([&name, &new_groups](std::pair<std::string, std::set<std::string>> group) -> void {
+                    std::set<std::string> new_set = group.second;
+                    if (new_set.erase(name) > 0) {
+                        new_groups[group.first] = new_set;
+                    }
+                });
+
+                for (auto it = new_groups.begin(); it != new_groups.end(); ++it) {
+                    node->_peer_groups.upsert(it->first, it->second);
+                }
+
+                //DebugSpewAlways("%s is EXITing.", name.c_str());
             } else if (event_type == "JOIN") {
                 std::string group = init_string(zyre_event_group(z_event));
 
                 if (group.empty()) {
                     DebugSpewAlways("MQ2DanNet: JOIN with empty group with name %s, will not add to lists.", name.c_str());
                 } else {
-					node->_join_callbacks.remove_if([&name, &group](std::function<bool(const std::string&, const std::string&)> f) -> bool {
-						return f(name, group);
-					});
+                    node->_join_callbacks.remove_if([&name, &group](std::function<bool(const std::string&, const std::string&)> f) -> bool {
+                        return f(name, group);
+                    });
 
-					node->_peer_groups.upsert(group, [&name](std::set<std::string>& group) -> void {
-						group.emplace(name);
-					});
-                    DebugSpewAlways("JOIN %s : %s", group.c_str(), name.c_str());
+                    node->_peer_groups.upsert(group, [&name](std::set<std::string>& group) -> void {
+                        group.emplace(name);
+                    });
+                    //DebugSpewAlways("JOIN %s : %s", group.c_str(), name.c_str());
                 }
             } else if (event_type == "LEAVE") {
                 std::string group = init_string(zyre_event_group(z_event));
@@ -1089,18 +1258,18 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                 if (group.empty()) {
                     DebugSpewAlways("MQ2DanNet: LEAVE with empty group with name %s, will not remove from lists.", name.c_str());
                 } else {
-					node->_leave_callbacks.remove_if([&name, &group](std::function<bool(const std::string&, const std::string&)> f) -> bool {
-						return f(name, group);
-					});
-					node->_peer_groups.erase_if(group, [&name, &node](std::set<std::string> &group) -> bool {
-						group.erase(name);
-						return group.empty();
-					});
-                    DebugSpewAlways("LEAVE %s : %s", group.c_str(), name.c_str());
+                    node->_leave_callbacks.remove_if([&name, &group](std::function<bool(const std::string&, const std::string&)> f) -> bool {
+                        return f(name, group);
+                    });
+                    node->_peer_groups.erase_if(group, [&name, &node](std::set<std::string>& group) -> bool {
+                        group.erase(name);
+                        return group.empty();
+                    });
+                    //DebugSpewAlways("LEAVE %s : %s", group.c_str(), name.c_str());
                 }
             } else if (event_type == "WHISPER") {
                 // use get_msg because we want ownership to pass the command up
-                zmsg_t *message = zyre_event_get_msg(z_event);
+                zmsg_t* message = zyre_event_get_msg(z_event);
                 if (!message) {
                     DebugSpewAlways("MQ2DanNet: Got NULL WHISPER message from %s", name.c_str());
                 } else {
@@ -1115,13 +1284,13 @@ void Node::node_actor(zsock_t *pipe, void *args) {
                     DebugSpewAlways("MQ2DanNet: SHOUT with empty group from %s, not passing message.", name.c_str());
                 } else {
                     // use get_msg because we want ownership to pass the command up
-                    zmsg_t *message = zyre_event_get_msg(z_event);
+                    zmsg_t* message = zyre_event_get_msg(z_event);
                     if (!message) {
                         DebugSpewAlways("MQ2DanNet: Got NULL SHOUT message from %s in %s", name.c_str(), group.c_str());
                     } else {
                         // note that this goes to the end of the message
                         zmsg_addstr(message, name.c_str());
-                        zmsg_addstr(message, group.c_str()); 
+                        zmsg_addstr(message, group.c_str());
                         zmsg_send(&message, node->_actor);
                     }
                 }
@@ -1156,7 +1325,7 @@ void Node::node_actor(zsock_t *pipe, void *args) {
 
     zlist_t* own_groups = zyre_own_groups(node->_node);
     if (own_groups) {
-        const char *peer_group = reinterpret_cast<const char *>(zlist_first(own_groups));
+        const char* peer_group = reinterpret_cast<const char*>(zlist_first(own_groups));
         while (peer_group) {
             zyre_leave(node->_node, peer_group);
             peer_group = reinterpret_cast<const char*>(zlist_next(own_groups));
@@ -1169,10 +1338,11 @@ void Node::node_actor(zsock_t *pipe, void *args) {
     zyre_stop(node->_node);
     zclock_sleep(100);
     zyre_destroy(&node->_node);
+    zpoller_destroy(&node->_poller);
     zclock_sleep(100);
 }
 
-std::string Node::init_string(const char *szStr) {
+std::string Node::init_string(const char* szStr) {
     if (szStr) {
         std::string str(szStr);
         std::transform(str.begin(), str.end(), str.begin(), ::tolower);
@@ -1184,9 +1354,9 @@ std::string Node::init_string(const char *szStr) {
 
 MQ2DANNET_NODE_API std::string MQ2DanNet::Node::register_response(std::function<bool(std::stringstream&&)> callback) {
     // C99, 6.2.5p9 -- guarantees that this will wrap to 0 once we reach max value
-	unsigned char next_val = _response_keys.get_next([](unsigned char key) -> unsigned char {
-		return key + 1;
-	});
+    unsigned char next_val = _response_keys.get_next([](unsigned char key) -> unsigned char {
+        return key + 1;
+    });
     _response_keys.insert(next_val);
     std::string key = "response_" + std::to_string((unsigned int)next_val);
 
@@ -1207,28 +1377,28 @@ MQ2DANNET_NODE_API std::string MQ2DanNet::Node::register_observer(const std::str
     // didn't find anything, insert a new one
     Query obs(query);
 
-	unsigned int position = _observer_map.upsert_wrap(std::move(obs), [](unsigned int p) -> unsigned int {
-		return p + 1;
-	});
+    unsigned int position = _observer_map.upsert_wrap(std::move(obs), [](unsigned int p) -> unsigned int {
+        return p + 1;
+    });
 
     return observer_group(position);
 }
 
 MQ2DANNET_NODE_API void MQ2DanNet::Node::unregister_observer(const std::string& query) {
-	_observer_map.erase_if([&query](std::pair<unsigned int, Query> p) -> bool {
-		return p.second.query == query;
-	});
+    _observer_map.erase_if([&query](std::pair<unsigned int, Query> p) -> bool {
+        return p.second.query == query;
+    });
 }
 
 MQ2DANNET_NODE_API void MQ2DanNet::Node::observe(const std::string& group, const std::string& name, const std::string& query) {
     join(group);
-	_observed_map.upsert(Observed(query, name), group);
+    _observed_map.upsert(Observed(query, name), group);
 }
 
 MQ2DANNET_NODE_API void MQ2DanNet::Node::forget(const std::string& group) {
-	_observed_map.erase_if([&group](auto p) -> bool {
-		return p.second == group;
-	});
+    _observed_map.erase_if([&group](auto p) -> bool {
+        return p.second == group;
+    });
 
     _observed_data.erase(group);
 
@@ -1236,30 +1406,91 @@ MQ2DANNET_NODE_API void MQ2DanNet::Node::forget(const std::string& group) {
 }
 
 MQ2DANNET_NODE_API void MQ2DanNet::Node::forget(const std::string& name, const std::string& query) {
-	Observed observed = Observed(query, name);
-	_observed_map.foreach([this, observed](std::pair<Observed, std::string> pair) -> void {
-		if (pair.first.query == observed.query && pair.first.name == observed.name) {
-			_observed_data.erase(pair.second);
-			leave(pair.second);
-		}
-	});
-	_observed_map.erase(observed);
+    Observed observed = Observed(query, name);
+    _observed_map.foreach ([this, observed](std::pair<Observed, std::string> pair) -> void {
+        if (pair.first.query == observed.query && pair.first.name == observed.name) {
+            _observed_data.erase(pair.second);
+            leave(pair.second);
+        }
+    });
+    _observed_map.erase(observed);
+}
+
+MQ2DANNET_NODE_API void MQ2DanNet::Node::forget_all(const std::string& name) {
+    std::list<Observed> to_drop;
+    _observed_map.foreach ([this, &name, &to_drop](std::pair<Observed, std::string> pair) -> void {
+        if (pair.first.name == name) {
+            _observed_data.erase(pair.second);
+            leave(pair.second);
+            to_drop.push_back(pair.first);
+        }
+    });
+
+    for (auto drop : to_drop) {
+        _observed_map.erase(drop);
+    }
 }
 
 MQ2DANNET_NODE_API void MQ2DanNet::Node::update(const std::string& group, const std::string& data, const std::string& output) {
-	_observed_data.upsert(group, Observation(output, data, MQGetTickCount64()));
+    _observed_data.upsert(group, Observation(output, data, MQGetTickCount64()));
 }
 
 MQ2DANNET_NODE_API const Node::Observation MQ2DanNet::Node::read(const std::string& group) {
-	return _observed_data.get(group);
+    return _observed_data.get(group);
 }
 
 MQ2DANNET_NODE_API const Node::Observation MQ2DanNet::Node::read(const std::string& name, const std::string& query) {
-	return _observed_map.get(Observed(query, name));
+    // this is safe because these get return default constructed objects if they aren't found
+    return _observed_data.get(_observed_map.get(Observed(query, name)));
 }
 
 MQ2DANNET_NODE_API bool MQ2DanNet::Node::can_read(const std::string& name, const std::string& query) {
-	return _observed_map.contains(Observed(query, name));
+    return _observed_map.contains(Observed(query, name));
+}
+
+MQ2DANNET_NODE_API size_t MQ2DanNet::Node::observed_count(const std::string& name) {
+    std::set<Observed, ObservedCompare> keys = _observed_map.keys();
+    std::list<Observed> observed;
+    std::copy_if(keys.cbegin(), keys.cend(), std::inserter(observed, observed.begin()),
+        [&name](const Observed& obs) { return obs.name == name; });
+
+    return observed.size();
+}
+
+MQ2DANNET_NODE_API std::set<std::string> MQ2DanNet::Node::observed_queries(const std::string& name) {
+    std::set<Observed, ObservedCompare> keys = _observed_map.keys();
+    std::set<Observed, ObservedCompare> observed;
+    std::copy_if(keys.cbegin(), keys.cend(), std::inserter(observed, observed.begin()),
+        [&name](const Observed& obs) { return obs.name == name; });
+
+    std::set<std::string> queries;
+    std::transform(observed.cbegin(), observed.cend(), std::inserter(queries, queries.begin()),
+        [](const Observed& obs) { return obs.query; });
+
+    return queries;
+}
+
+MQ2DANNET_NODE_API size_t MQ2DanNet::Node::observer_count() {
+    return _observer_map.keys().size();
+}
+
+MQ2DANNET_NODE_API std::set<std::string> MQ2DanNet::Node::observer_queries() {
+    std::list<Query> values = _observer_map.values();
+    std::set<std::string> queries;
+    std::transform(values.cbegin(), values.cend(), std::inserter(queries, queries.begin()),
+        [](const Query& query) { return query.query; });
+
+    return queries;
+}
+
+MQ2DANNET_NODE_API std::set<std::string> MQ2DanNet::Node::observers(const std::string& query) {
+    for (auto observer : _observer_map.copy()) {
+        if (observer.second.query == query) {
+            return get_group_peers(Node::get().observer_group(observer.first));
+        }
+    }
+
+    return std::set<std::string>();
 }
 
 // stub these for now, nothing to do here since memory is managed elsewhere (and all registered commands will go away)
@@ -1327,7 +1558,8 @@ MQ2TYPEVAR MQ2DanNet::Node::parse_response(const std::string& output, const std:
                 MacroError("/dquery: setting '%s' failed, variable type rejected new value of %s", szOutput, szData);
             }
 
-            if (pVar) return pVar->Var;
+            if (pVar)
+                return pVar->Var;
         } else {
             MacroError("/dquery failed, variable '%s' not found", szOutput);
         }
@@ -1350,11 +1582,13 @@ MQ2TYPEVAR MQ2DanNet::Node::parse_response(const std::string& output, const std:
 }
 
 std::string MQ2DanNet::Node::peer_address(const std::string& name) {
-	return _connected_peers.get(name);
+    return _connected_peers.get(name);
 }
 
 void MQ2DanNet::Node::save_channels() {
-    _rejoin_groups.copy() = get_own_groups();
+    for (auto group : get_own_groups()) {
+        _rejoin_groups.insert(group);
+    }
 }
 
 void MQ2DanNet::Node::clear_saved_channels() {
@@ -1366,20 +1600,42 @@ void Node::enter() {
     if (!pChar)
         return;
 
+    if (_actor) {
+        DebugSpewAlways("Already had actor for %s", _node_name.c_str());
+        zactor_destroy(&_actor);
+    }
+
     _node_name = get_full_name(pChar->Name);
 
     DebugSpewAlways("Spinning up actor for %s", _node_name.c_str());
     _actor = zactor_new(Node::node_actor, this);
+
+    if (_actor) {
+        if (_poller) {
+            zpoller_destroy(&_poller);
+        }
+
+        _poller = zpoller_new(_actor, (void*)NULL);
+        if (!_poller)
+            throw new std::invalid_argument("Could not create poller");
+    }
 }
 
 void Node::exit() {
     if (_actor) {
         DebugSpewAlways("Destroying actor for %s", _node_name.c_str());
         zactor_destroy(&_actor);
-    } else if (_node) {
+    } else if (_node || _poller) {
         // in general destroying the zactor will do this, but just in case it's dangling, let's be safe
-        DebugSpewAlways("WARNING: had a node without an actor in %s", _node_name.c_str());
-        zyre_destroy(&_node);
+        if (_node) {
+            DebugSpewAlways("WARNING: had a node without an actor in %s", _node_name.c_str());
+            zyre_destroy(&_node);
+        }
+
+        if (_poller) {
+            DebugSpewAlways("WARNING: had a poller without an actor in %s", _node_name.c_str());
+            zpoller_destroy(&_poller);
+        }
     }
 
     _node_name = "";
@@ -1392,11 +1648,28 @@ void MQ2DanNet::Node::startup() {
 }
 
 void MQ2DanNet::Node::set_timeout(int timeout) {
-        zmq_setsockopt(_actor, ZMQ_RCVTIMEO, "", timeout);
+    zmq_setsockopt(_actor, ZMQ_RCVTIMEO, "", timeout);
 }
 
 void MQ2DanNet::Node::shutdown() {
     zsys_shutdown();
+}
+
+void MQ2DanNet::Node::recv() {
+    if (!_poller)
+        return;
+
+    void* which = zpoller_wait(_poller, 0);
+    if (which) {
+        // we currently only expect signals here for a keepalive -- this can be expanded to a full heartbeat if necessary
+        zmsg_t* msg = zmsg_recv(which);
+        if (msg) {
+            int rc = zmsg_signal(msg);
+            zmsg_destroy(&msg);
+            if (rc == 0)
+                zsock_signal(_actor, 0);
+        }
+    }
 }
 
 void Node::queue_command(const std::string& command, std::stringstream&& args) {
@@ -1409,10 +1682,14 @@ const std::string MQ2DanNet::Node::observer_group(const unsigned int key) {
 }
 
 void Node::do_next() {
-	std::pair<std::string, std::stringstream> command_pair = _command_queue.pop();
-	_command_map.erase_if(command_pair.first, [&command_pair](std::function<bool(std::stringstream &&)> f) -> bool {
-		return f(std::move(command_pair.second));
-	});
+    std::pair<std::string, std::stringstream> command_pair = _command_queue.pop();
+    _command_map.erase_if(command_pair.first, [&command_pair](std::function<bool(std::stringstream &&)> f) -> bool {
+        return f(std::move(command_pair.second));
+    });
+}
+
+void Node::remove_commands(const std::function<bool(std::pair<std::string, std::stringstream>&)>& f) {
+    _command_queue.remove_if(f);
 }
 
 #pragma endregion
@@ -1427,8 +1704,8 @@ const bool MQ2DanNet::Echo::callback(std::stringstream&& args) {
 
     try {
         received >> from >> group >> text;
-		from = Node::get().get_name(from);
-        DebugSpewAlways("ECHO --> FROM: %s, GROUP: %s, TEXT: %s", from.c_str(), group.c_str(), text.c_str());
+        from = Node::get().get_name(from);
+        //DebugSpewAlways("ECHO --> FROM: %s, GROUP: %s, TEXT: %s", from.c_str(), group.c_str(), text.c_str());
 
         if (group.empty())
             WriteChatf("\ax\a-t[\ax\at %s \ax\a-t]\ax \aw%s\ax", from.c_str(), text.c_str());
@@ -1446,7 +1723,7 @@ std::stringstream MQ2DanNet::Echo::pack(const std::string& recipient, const std:
     std::stringstream send_stream;
     Archive<std::stringstream> send(send_stream);
     send << message;
-    
+
     return send_stream;
 }
 
@@ -1458,7 +1735,7 @@ const bool MQ2DanNet::Execute::callback(std::stringstream&& args) {
 
     try {
         received >> from >> group >> command;
-        DebugSpewAlways("EXECUTE --> FROM: %s, GROUP: %s, TEXT: %s", from.c_str(), group.c_str(), command.c_str());
+        //DebugSpewAlways("EXECUTE --> FROM: %s, GROUP: %s, TEXT: %s", from.c_str(), group.c_str(), command.c_str());
 
         std::string final_command = std::regex_replace(command, std::regex("\\$\\\\\\{"), "${");
 
@@ -1498,7 +1775,7 @@ const bool MQ2DanNet::Query::callback(std::stringstream&& args) {
 
     try {
         received >> from >> group >> key >> request;
-        DebugSpewAlways("QUERY --> FROM: %s, GROUP: %s, REQUEST: %s", from.c_str(), group.c_str(), request.c_str());
+        //DebugSpewAlways("QUERY --> FROM: %s, GROUP: %s, REQUEST: %s", from.c_str(), group.c_str(), request.c_str());
 
         std::stringstream send_stream;
         Archive<std::stringstream> send(send_stream);
@@ -1570,7 +1847,7 @@ const bool MQ2DanNet::Observe::callback(std::stringstream&& args) {
 
     try {
         received >> from >> group >> key >> query;
-        DebugSpewAlways("OBSERVE --> FROM: %s, GROUP: %s, QUERY: %s", from.c_str(), group.c_str(), query.c_str());
+        //DebugSpewAlways("OBSERVE --> FROM: %s, GROUP: %s, QUERY: %s", from.c_str(), group.c_str(), query.c_str());
 
         std::stringstream args;
         Archive<std::stringstream> ar(args);
@@ -1607,7 +1884,7 @@ std::stringstream MQ2DanNet::Observe::pack(const std::string& recipient, const s
         return std::stringstream();
     }
 
-    // this is the callback to actually start observing. We can't just do it because the observed will come back with the right group 
+    // this is the callback to actually start observing. We can't just do it because the observed will come back with the right group
     auto f = [final_query, output = move(output)](std::stringstream&& args) -> bool {
         Archive<std::stringstream> ar(args);
         std::string from;
@@ -1648,7 +1925,24 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
 
     try {
         received >> from >> group >> data;
-        DebugSpewAlways("UPDATE --> FROM: %s, GROUP: %s, DATA: %s", from.c_str(), group.c_str(), data.c_str());
+        Node::get().remove_commands([from, group, &data](std::pair<std::string, std::stringstream>& command) -> bool {
+            if (command.first == Node::name<Update>()) {
+                std::stringstream args_copy(command.second.str());
+                Archive<std::stringstream> recv(args_copy);
+                std::string copy_from, copy_group, copy_data;
+
+                recv >> copy_from >> copy_group >> copy_data;
+                if (from == copy_from && group == copy_group) {
+                    //DebugSpewAlways("DROPPING EXTRA UPDATE --> FROM: %s, GROUP: %s", from.c_str(), group.c_str());
+                    data = copy_data;
+                    return true;
+                }
+            }
+
+            return false;
+        });
+
+        //DebugSpewAlways("UPDATE --> FROM: %s, GROUP: %s, DATA: %s", from.c_str(), group.c_str(), data.c_str());
 
         std::string output = Node::get().read(group).output;
         CHAR szOutput[MAX_STRING] = { 0 };
@@ -1686,9 +1980,8 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
     return false;
 }
 
-std::stringstream MQ2DanNet::Update::pack(const std::string& recipient, const std::string& query) {
+std::stringstream MQ2DanNet::Update::pack(const std::string& recipient, const std::string& result) {
     std::stringstream send_stream;
-    std::string result = Node::get().parse_query(query);
 
     Archive<std::stringstream> send(send_stream);
     send << result;
@@ -1734,6 +2027,10 @@ std::string GetDefault(const std::string& val) {
         return std::string("off");
     else if (val == "Observe Delay")
         return std::string("1000");
+    else if (val == "Evasive")
+        return std::string("1000");
+    else if (val == "Expired")
+        return std::string("30000");
     else if (val == "Keepalive")
         return std::string("30000");
 
@@ -1792,8 +2089,8 @@ std::string CreateArray(const std::set<std::string>& members) {
         std::string delimiter = "|";
         auto accum = std::accumulate(members.cbegin(), members.cend(), std::string(),
             [delimiter](const std::string& s, const std::string& p) {
-            return s + (s.empty() ? std::string() : delimiter) + p;
-        });
+                return s + (s.empty() ? std::string() : delimiter) + p;
+            });
 
         if (Node::get().front_delimiter())
             return delimiter + accum;
@@ -1817,10 +2114,9 @@ std::set<std::string> ParseArray(const std::string& arr) {
 }
 
 // leave all this here in case eqmule ever finds the cause for this to crash on live
-class MQ2DanObservationType *pDanObservationType = nullptr;
+class MQ2DanObservationType* pDanObservationType = nullptr;
 class MQ2DanObservationType : public MQ2Type {
 private:
-    
 public:
     enum Members {
         Received = 1
@@ -1830,12 +2126,14 @@ public:
         TypeMember(Received);
     }
 
-    bool GetMember(MQ2VARPTR VarPtr, char* Member, char* Index, MQ2TYPEVAR &Dest) {
+    bool GetMember(MQ2VARPTR VarPtr, char* Member, char* Index, MQ2TYPEVAR& Dest) {
         PMQ2TYPEMEMBER pMember = MQ2DanObservationType::FindMember(Member);
-        if (!pMember) return false;
+        if (!pMember)
+            return false;
 
-        Node::Observation *pObservation = ((Node::Observation*)VarPtr.Ptr);
-        if (!pObservation) return false;
+        Node::Observation* pObservation = ((Node::Observation*)VarPtr.Ptr);
+        if (!pObservation)
+            return false;
 
         switch ((Members)pMember->ID) {
         case Received:
@@ -1848,37 +2146,37 @@ public:
     }
 
     bool ToString(MQ2VARPTR VarPtr, char* Destination) {
-        Node::Observation *pObservation = ((Node::Observation*)VarPtr.Ptr);
-		if (!pObservation)
-			return false;
+        Node::Observation* pObservation = ((Node::Observation*)VarPtr.Ptr);
+        if (!pObservation)
+            return false;
 
         strcpy_s(Destination, MAX_STRING, pObservation->data.c_str());
         return true;
     }
 
-	void InitVariable(MQ2VARPTR &VarPtr) {
-		VarPtr.Ptr = malloc(sizeof(Node::Observation));
-		VarPtr.HighPart = 0;
-		ZeroMemory(VarPtr.Ptr, sizeof(Node::Observation));
-	}
+    void InitVariable(MQ2VARPTR& VarPtr) {
+        VarPtr.Ptr = malloc(sizeof(Node::Observation));
+        VarPtr.HighPart = 0;
+        ZeroMemory(VarPtr.Ptr, sizeof(Node::Observation));
+    }
 
-	void FreeVariable(MQ2VARPTR &VarPtr) {
-		free(VarPtr.Ptr);
-	}
+    void FreeVariable(MQ2VARPTR& VarPtr) {
+        free(VarPtr.Ptr);
+    }
 
-    bool FromData(MQ2VARPTR &VarPtr, MQ2TYPEVAR &Source) {
-		if (Source.Type == pDanObservationType) {
-			memcpy(VarPtr.Ptr, Source.Ptr, sizeof(Node::Observation));
-			return true;
-		}
+    bool FromData(MQ2VARPTR& VarPtr, MQ2TYPEVAR& Source) {
+        if (Source.Type == pDanObservationType) {
+            memcpy(VarPtr.Ptr, Source.Ptr, sizeof(Node::Observation));
+            return true;
+        }
 
-		return false;
-	}
+        return false;
+    }
 
-    bool FromString(MQ2VARPTR &VarPtr, char* Source) { return false; }
+    bool FromString(MQ2VARPTR& VarPtr, char* Source) { return false; }
 };
 
-class MQ2DanNetType *pDanNetType = nullptr;
+class MQ2DanNetType* pDanNetType = nullptr;
 class MQ2DanNetType : public MQ2Type {
 private:
     std::string _peer;
@@ -1900,6 +2198,8 @@ public:
         FrontDelim,
         Timeout,
         ObserveDelay,
+        Evasive,
+        Expired,
         Keepalive,
         PeerCount,
         Peers,
@@ -1909,10 +2209,16 @@ public:
         Joined,
         O,
         Observe,
-		OReceived,
+        OReceived,
+        ObserveReceived,
+        OCount,
+        ObserveCount,
+        OSet,
+        ObserveSet,
         Q,
         Query,
-		QReceived
+        QReceived,
+        QueryReceived
     };
 
     MQ2DanNetType() : MQ2Type("DanNet") {
@@ -1925,6 +2231,8 @@ public:
         TypeMember(FrontDelim);
         TypeMember(Timeout);
         TypeMember(ObserveDelay);
+        TypeMember(Evasive);
+        TypeMember(Expired);
         TypeMember(Keepalive);
         TypeMember(PeerCount);
         TypeMember(Peers);
@@ -1934,31 +2242,38 @@ public:
         TypeMember(Joined);
         TypeMember(O);
         TypeMember(Observe);
-		TypeMember(OReceived);
+        TypeMember(OCount);
+        TypeMember(ObserveCount);
+        TypeMember(OSet);
+        TypeMember(ObserveSet);
+        TypeMember(OReceived);
+        TypeMember(ObserveReceived);
         TypeMember(Q);
         TypeMember(Query);
-		TypeMember(QReceived);
+        TypeMember(QReceived);
+        TypeMember(QueryReceived);
     }
 
-    bool GetMember(MQ2VARPTR VarPtr, char* Member, char* Index, MQ2TYPEVAR &Dest) {
+    bool GetMember(MQ2VARPTR VarPtr, char* Member, char* Index, MQ2TYPEVAR& Dest) {
         _buf[0] = '\0';
 
         std::string local_peer = _peer;
         _peer.clear();
 
         PMQ2TYPEMEMBER pMember = MQ2DanNetType::FindMember(Member);
-        if (!pMember) return false;
+        if (!pMember)
+            return false;
 
         switch ((Members)pMember->ID) {
         case Name:
-			strcpy_s(_buf, Node::get().get_name(Node::get().name()).c_str());
+            strcpy_s(_buf, Node::get().get_name(Node::get().name()).c_str());
             Dest.Ptr = &_buf[0];
             Dest.Type = pStringType;
             return true;
         case Version:
-			sprintf_s(_buf, "%1.4f", MQ2Version);
-			Dest.Ptr = &_buf[0];
-			Dest.Type = pStringType;
+            sprintf_s(_buf, "%1.4f", MQ2Version);
+            Dest.Ptr = &_buf[0];
+            Dest.Type = pStringType;
             return true;
         case Debug:
             Dest.DWord = Node::get().debugging();
@@ -1989,13 +2304,22 @@ public:
             Dest.DWord = Node::get().observe_delay();
             Dest.Type = pIntType;
             return true;
+        case Evasive:
+            Dest.DWord = Node::get().evasive();
+            Dest.Type = pIntType;
+            return true;
+        case Expired:
+            Dest.DWord = Node::get().expired();
+            Dest.Type = pIntType;
+            return true;
         case Keepalive:
             Dest.DWord = Node::get().keepalive();
             Dest.Type = pIntType;
             return true;
         case PeerCount:
             if (IsNumber(Index)) {
-                if (_groups.empty()) _groups = Node::get().get_all_groups();
+                if (_groups.empty())
+                    _groups = Node::get().get_all_groups();
                 int idx = atoi(Index) - 1;
                 auto group_it = _groups.cbegin();
                 std::advance(group_it, idx);
@@ -2003,7 +2327,7 @@ public:
                     Dest.DWord = Node::get().get_group_peers(*group_it).size();
                 else
                     return false;
-            } else if (Index[0] != '\0') {
+            } else if (Index && Index[0] != '\0') {
                 Dest.DWord = Node::get().get_group_peers(Node::init_string(Index)).size();
             } else {
                 _peers = Node::get().get_peers();
@@ -2013,23 +2337,24 @@ public:
             return true;
         case Peers:
             if (IsNumber(Index)) {
-                if (_peers.empty()) _peers = Node::get().get_peers();
+                if (_peers.empty())
+                    _peers = Node::get().get_peers();
                 int idx = atoi(Index) - 1;
                 auto peer_it = _peers.cbegin();
                 std::advance(peer_it, idx);
                 if (peer_it != _peers.cend()) {
                     std::string out = Node::get().get_name(*peer_it);
                     strcpy_s(_buf, out.c_str());
-                }  else
+                } else
                     return false;
-            } else if (Index[0] != '\0') {
+            } else if (Index && Index[0] != '\0') {
                 auto peers = Node::get().get_group_peers(Node::init_string(Index));
                 std::set<std::string> out;
                 if (Node::get().full_names())
                     out = peers;
                 else {
                     std::transform(peers.cbegin(), peers.cend(), std::inserter(out, out.begin()), [](std::string s) -> std::string {
-						return Node::get().get_short_name(s);
+                        return Node::get().get_short_name(s);
                     });
                 }
                 strcpy_s(_buf, CreateArray(out).c_str());
@@ -2040,7 +2365,7 @@ public:
                     out = peers;
                 else {
                     std::transform(peers.cbegin(), peers.cend(), std::inserter(out, out.begin()), [](std::string s) -> std::string {
-						return Node::get().get_short_name(s);
+                        return Node::get().get_short_name(s);
                     });
                 }
                 strcpy_s(_buf, CreateArray(out).c_str());
@@ -2056,7 +2381,8 @@ public:
             return true;
         case Groups:
             if (IsNumber(Index)) {
-                if (_groups.empty()) _groups = Node::get().get_all_groups();
+                if (_groups.empty())
+                    _groups = Node::get().get_all_groups();
                 int idx = atoi(Index) - 1;
                 auto group_it = _groups.cbegin();
                 std::advance(group_it, idx);
@@ -2077,7 +2403,8 @@ public:
             return true;
         case Joined:
             if (IsNumber(Index)) {
-                if (_joined.empty()) _joined = Node::get().get_own_groups();
+                if (_joined.empty())
+                    _joined = Node::get().get_own_groups();
                 int idx = atoi(Index) - 1;
                 auto group_it = _joined.cbegin();
                 std::advance(group_it, idx);
@@ -2094,44 +2421,92 @@ public:
         case Q:
         case Query:
             _current_observation = Node::Observation(Node::get().query());
-        
-			if (_current_observation.received != 0) {
-				Dest.Ptr = &_current_observation;
-				Dest.Type = pDanObservationType;
-				return true;
-			} else
-				return false;
-		case QReceived:
+
+            if (_current_observation.received != 0) {
+                Dest.Ptr = &_current_observation;
+                Dest.Type = pDanObservationType;
+                return true;
+            } else
+                return false;
+        case QReceived:
+        case QueryReceived:
             _current_observation = Node::Observation(Node::get().query());
             Dest.UInt64 = _current_observation.received;
             Dest.Type = pInt64Type;
             return true;
-        }
-
-        if (!local_peer.empty()) {
-            switch ((Members)pMember->ID) {
-            case O:
-            case Observe:
+        case O:
+        case Observe:
+            if (!local_peer.empty()) {
                 if (Index && Index[0] != '\0') {
                     _current_observation = Node::get().read(local_peer, Node::get().trim_query(Index));
 
-					if (_current_observation.received != 0) {
-						Dest.Ptr = &_current_observation;
-						Dest.Type = pDanObservationType;
-						return true;
-					} else
-						return false;
-                } else
-                    return false;
-			case OReceived:
-				if (Index && Index[0] != '\0') {
-					_current_observation = Node::get().read(local_peer, Node::get().trim_query(Index));
-					Dest.UInt64 = _current_observation.received;
-					Dest.Type = pInt64Type;
-					return true;
-				} else
-					return false;
+                    if (_current_observation.received != 0) {
+                        Dest.Ptr = &_current_observation;
+                        Dest.Type = pDanObservationType;
+                        return true;
+                    } else
+                        return false;
+                } else {
+                    auto observers = Node::get().observed_queries(local_peer);
+                    strcpy_s(_buf, CreateArray(observers).c_str());
+
+                    Dest.Ptr = &_buf[0];
+                    Dest.Type = pStringType;
+                    return true;
+                }
+            } else {
+                if (Index && Index[0] != '\0') {
+                    auto observers = Node::get().observers(Node::get().trim_query(Index));
+                    strcpy_s(_buf, CreateArray(observers).c_str());
+                } else {
+                    auto observers = Node::get().observer_queries();
+                    strcpy_s(_buf, CreateArray(observers).c_str());
+                }
+
+                Dest.Ptr = &_buf[0];
+                Dest.Type = pStringType;
+                return true;
             }
+        case OCount:
+        case ObserveCount:
+            if (!local_peer.empty()) {
+                Dest.DWord = Node::get().observed_count(local_peer);
+            } else {
+                Dest.DWord = Node::get().observer_count();
+            }
+            Dest.Type = pIntType;
+            return true;
+        case OSet:
+        case ObserveSet:
+            if (Index && Index[0] != '\0') {
+                if (!local_peer.empty()) {
+                    auto observed = Node::get().observed_queries(local_peer);
+                    if (observed.find(Node::get().trim_query(Index)) != observed.end()) {
+                        Dest.DWord = 1;
+                    } else {
+                        Dest.DWord = 0;
+                    }
+                } else {
+                    auto observers = Node::get().observer_queries();
+                    if (observers.find(Node::get().trim_query(Index)) != observers.end()) {
+                        Dest.DWord = 1;
+                    } else {
+                        Dest.DWord = 0;
+                    }
+                }
+                Dest.Type = pBoolType;
+                return true;
+            } else
+                return false;
+        case OReceived:
+        case ObserveReceived:
+            if (!local_peer.empty() && Index && Index[0] != '\0') {
+                _current_observation = Node::get().read(local_peer, Node::get().trim_query(Index));
+                Dest.UInt64 = _current_observation.received;
+                Dest.Type = pInt64Type;
+                return true;
+            } else
+                return false;
         }
 
         return false;
@@ -2145,29 +2520,27 @@ public:
     }
 
     bool ToString(MQ2VARPTR VarPtr, char* Destination) {
-		if (_peer.empty())
-			return false;
+        if (_peer.empty())
+            return false;
 
         strcpy_s(Destination, MAX_STRING, _peer.c_str());
         _peer.clear();
         return true;
     }
 
-    bool FromData(MQ2VARPTR &VarPtr, MQ2TYPEVAR &Source) { return false; }
-    bool FromString(MQ2VARPTR &VarPtr, char* Source) { return false; }
+    bool FromData(MQ2VARPTR& VarPtr, MQ2TYPEVAR& Source) { return false; }
+    bool FromString(MQ2VARPTR& VarPtr, char* Source) { return false; }
 };
 
-BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR &Dest) {
+BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR& Dest) {
     Dest.DWord = 1;
     Dest.Type = pDanNetType;
 
     if (Node::get().debugging())
         WriteChatf("MQ2DanNetType::dataDanNet Index %s", Index);
 
-	if (!Index || Index[0] == '\0')
-		pDanNetType->SetPeer(Node::get().get_full_name(Node::get().name()));
-	else if (!Node::get().has_peer(Index))
-		pDanNetType->SetPeer("");
+    if (!Index || Index[0] == '\0' || !Node::get().has_peer(Index))
+        pDanNetType->SetPeer("");
     else
         pDanNetType->SetPeer(Node::get().get_full_name(Index));
 
@@ -2175,27 +2548,27 @@ BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR &Dest) {
 }
 
 std::string unescape_string(const std::string& input) {
-	char szOut[MAX_STRING] = { 0 };
-	for (size_t old_pos = 0, new_pos = 0; old_pos < input.length(); ++old_pos, szOut[++new_pos] = 0) {
-		if (input.at(old_pos) == '\\') {
-			++old_pos;
-			if (input.at(old_pos)) {
-				if (input.at(old_pos) == '\\')
-					szOut[new_pos] = input.at(old_pos);
-				else if (input.at(old_pos) == 'n') {
-					szOut[new_pos++] = '\r';
-					szOut[new_pos] = '\n';
-				} else if (input.at(old_pos) >= 'a' && input.at(old_pos) <= 'z')
-					szOut[new_pos] = input.at(old_pos) - 'a' + 7;
-				else if (input.at(old_pos) >= 'A' && input.at(old_pos) <= 'Z')
-					szOut[new_pos] = input.at(old_pos) - 'a' + 7;
-			}
-		} else {
-			szOut[new_pos] = input.at(old_pos);
-		}
-	}
+    char szOut[MAX_STRING] = { 0 };
+    for (size_t old_pos = 0, new_pos = 0; old_pos < input.length(); ++old_pos, szOut[++new_pos] = 0) {
+        if (input.at(old_pos) == '\\') {
+            ++old_pos;
+            if (input.at(old_pos)) {
+                if (input.at(old_pos) == '\\')
+                    szOut[new_pos] = input.at(old_pos);
+                else if (input.at(old_pos) == 'n') {
+                    szOut[new_pos++] = '\r';
+                    szOut[new_pos] = '\n';
+                } else if (input.at(old_pos) >= 'a' && input.at(old_pos) <= 'z')
+                    szOut[new_pos] = input.at(old_pos) - 'a' + 7;
+                else if (input.at(old_pos) >= 'A' && input.at(old_pos) <= 'Z')
+                    szOut[new_pos] = input.at(old_pos) - 'a' + 7;
+            }
+        } else {
+            szOut[new_pos] = input.at(old_pos);
+        }
+    }
 
-	return std::string(szOut);
+    return std::string(szOut);
 }
 
 PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
@@ -2243,6 +2616,20 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         else
             SetVar("General", "Observe Delay", GetDefault("Observe Delay"));
         Node::get().observe_delay(atoi(ReadVar("Observe Delay").c_str()));
+    } else if (szParam && !strcmp(szParam, "evasive")) {
+        GetArg(szParam, szLine, 2);
+        if (szParam && IsNumber(szParam))
+            SetVar("General", "Evasive", szParam);
+        else
+            SetVar("General", "Evasive", GetDefault("Evasive"));
+        Node::get().evasive(atoi(ReadVar("Evasive").c_str()));
+    } else if (szParam && !strcmp(szParam, "expired")) {
+        GetArg(szParam, szLine, 2);
+        if (szParam && IsNumber(szParam))
+            SetVar("General", "Expired", szParam);
+        else
+            SetVar("General", "Expired", GetDefault("Expired"));
+        Node::get().expired(atoi(ReadVar("Expired").c_str()));
     } else if (szParam && !strcmp(szParam, "keepalive")) {
         GetArg(szParam, szLine, 2);
         if (szParam && IsNumber(szParam))
@@ -2252,9 +2639,9 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         Node::get().keepalive(atoi(ReadVar("Keepalive").c_str()));
     } else if (szParam && !strcmp(szParam, "info")) {
         WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.4f\ax", MQ2Version);
-		for (std::string info : Node::get().get_info()) {
-			WriteChatf("%s", info.c_str());
-		}
+        for (std::string info : Node::get().get_info()) {
+            WriteChatf("%s", info.c_str());
+        }
     } else if (szParam && !strcmp(szParam, "version")) {
         WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.4f\ax", MQ2Version);
     } else {
@@ -2267,6 +2654,8 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         WriteChatf("           \ayfrontdelim [on|off]\ax -- turn front delimiters on or off");
         WriteChatf("           \aytimeout [new_timeout]\ax -- set the /dquery timeout");
         WriteChatf("           \ayobservedelay [new_delay]\ax -- set the delay between observe sends in ms");
+        WriteChatf("           \ayevasive [new_evasive]\ax -- set the evasive timeout in ms");
+        WriteChatf("           \ayexpired [new_expired]\ax -- set the expired timeout in ms");
         WriteChatf("           \aykeepalive [new_keepalive]\ax -- set the keepalive time for non-responding peers in ms");
         WriteChatf("           \ayinfo\ax -- output group/peer information");
     }
@@ -2338,7 +2727,7 @@ PLUGIN_API VOID DTellCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     else {
         name = Node::get().get_name(name);
 
-		std::string unescaped_message = unescape_string(message);
+        std::string unescaped_message = unescape_string(message);
         WriteChatf("\ax\a-t[ \ax\at-->\ax\a-t(%s) ]\ax \aw%s\ax", name.c_str(), unescaped_message.c_str());
         Node::get().whisper<MQ2DanNet::Echo>(name, unescaped_message);
     }
@@ -2351,19 +2740,19 @@ PLUGIN_API VOID DGtellCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     std::string message(szLine);
 
     std::set<std::string> groups = Node::get().get_all_groups();
-	if (groups.find(group) != groups.end()) {
+    if (groups.find(group) != groups.end()) {
         std::string::size_type n = message.find_first_not_of(" \t", 0);
         n = message.find_first_of(" \t", n);
         message.erase(0, message.find_first_not_of(" \t", n));
-	} else {
-		// let's assume that if we can't find the group, we just meant all
-		group = "all";
-	}
+    } else {
+        // let's assume that if we can't find the group, we just meant all
+        group = "all";
+    }
 
     if (group.empty() || message.empty())
         WriteChatColor("Syntax: /dgtell <group> <message> -- broadcast message to group", USERCOLOR_DEFAULT);
     else {
-		std::string unescaped_message = unescape_string(message);
+        std::string unescaped_message = unescape_string(message);
         WriteChatf("\ax\a-t[\ax\at -->\ax\a-t(%s) ]\ax \aw%s\ax", group.c_str(), unescaped_message.c_str());
         Node::get().shout<MQ2DanNet::Echo>(group, unescaped_message);
     }
@@ -2395,40 +2784,40 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     auto group = Node::init_string(szGroup);
     std::string command(szLine);
 
-	auto replace_qualifier = [&group, &command](const std::string& qualifier) {
-		if (group == qualifier) {
-			std::set<std::string> groups = Node::get().get_own_groups();
-			auto group_it = std::find_if(groups.cbegin(), groups.cend(), [&qualifier](const std::string& group_name) {
-				return group_name.find(qualifier + "_") == 0;
-			});
+    auto replace_qualifier = [&group, &command](const std::string& qualifier) {
+        if (group == qualifier) {
+            std::set<std::string> groups = Node::get().get_own_groups();
+            auto group_it = std::find_if(groups.cbegin(), groups.cend(), [&qualifier](const std::string& group_name) {
+                return group_name.find(qualifier + "_") == 0;
+            });
 
-			if (group_it != groups.cend()) {
-				group = *group_it;
-			} else {
-				// we know that qualifier is the first argument, but we don't have any group that matches -- we still need to delete the argument before sending the command
-				std::string::size_type n = command.find_first_not_of(" \t", 0);
-				n = command.find_first_of(" \t", n);
-				command.erase(0, command.find_first_not_of(" \t", n));
-			}
-		}
-	};
+            if (group_it != groups.cend()) {
+                group = *group_it;
+            } else {
+                // we know that qualifier is the first argument, but we don't have any group that matches -- we still need to delete the argument before sending the command
+                std::string::size_type n = command.find_first_not_of(" \t", 0);
+                n = command.find_first_of(" \t", n);
+                command.erase(0, command.find_first_not_of(" \t", n));
+            }
+        }
+    };
 
-	replace_qualifier("group");
-	replace_qualifier("raid");
-	replace_qualifier("zone");
+    replace_qualifier("group");
+    replace_qualifier("raid");
+    replace_qualifier("zone");
 
     std::set<std::string> groups = Node::get().get_all_groups();
-	if (group.find("/") == 0) {
-		// we can assume that '/' signifies the start of a command, so we haven't specified a group
-		group = "all";
-	} else if (groups.find(group) != groups.end()) {
+    if (group.find("/") == 0) {
+        // we can assume that '/' signifies the start of a command, so we haven't specified a group
+        group = "all";
+    } else if (groups.find(group) != groups.end()) {
         std::string::size_type n = command.find_first_not_of(" \t", 0);
         n = command.find_first_of(" \t", n);
         command.erase(0, command.find_first_not_of(" \t", n));
     } else {
-		SyntaxError("Could not find channel %s", group.c_str());
-		return;
-	}
+        SyntaxError("Could not find channel %s", group.c_str());
+        return;
+    }
 
     if (group.empty() || command.empty())
         WriteChatColor("Syntax: /dgexecute <group> <command> -- direct group to execute command", USERCOLOR_DEFAULT);
@@ -2440,21 +2829,21 @@ PLUGIN_API VOID DGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 }
 
 PLUGIN_API VOID DGGexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
-	char newLine[MAX_STRING] = { 0 };
-	sprintf_s(newLine, "group %s", szLine);
-	DGexecuteCommand(pSpawn, newLine);
+    char newLine[MAX_STRING] = { 0 };
+    sprintf_s(newLine, "group %s", szLine);
+    DGexecuteCommand(pSpawn, newLine);
 }
 
 PLUGIN_API VOID DGRexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
-	char newLine[MAX_STRING] = { 0 };
-	sprintf_s(newLine, "raid %s", szLine);
-	DGexecuteCommand(pSpawn, newLine);
+    char newLine[MAX_STRING] = { 0 };
+    sprintf_s(newLine, "raid %s", szLine);
+    DGexecuteCommand(pSpawn, newLine);
 }
 
 PLUGIN_API VOID DGZexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
-	char newLine[MAX_STRING] = { 0 };
-	sprintf_s(newLine, "zone %s", szLine);
-	DGexecuteCommand(pSpawn, newLine);
+    char newLine[MAX_STRING] = { 0 };
+    sprintf_s(newLine, "zone %s", szLine);
+    DGexecuteCommand(pSpawn, newLine);
 }
 
 PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
@@ -2463,40 +2852,40 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     auto group = Node::init_string(szGroup);
     std::string command(szLine);
 
-	auto replace_qualifier = [&group, &command](const std::string& qualifier) {
-		if (group == qualifier) {
-			std::set<std::string> groups = Node::get().get_own_groups();
-			auto group_it = std::find_if(groups.cbegin(), groups.cend(), [&qualifier](const std::string& group_name) {
-				return group_name.find(qualifier + "_") == 0;
-			});
+    auto replace_qualifier = [&group, &command](const std::string& qualifier) {
+        if (group == qualifier) {
+            std::set<std::string> groups = Node::get().get_own_groups();
+            auto group_it = std::find_if(groups.cbegin(), groups.cend(), [&qualifier](const std::string& group_name) {
+                return group_name.find(qualifier + "_") == 0;
+            });
 
-			if (group_it != groups.cend()) {
-				group = *group_it;
-			} else {
-				// we know that qualifier is the first argument, but we don't have any group that matches -- we still need to delete the argument before sending the command
-				std::string::size_type n = command.find_first_not_of(" \t", 0);
-				n = command.find_first_of(" \t", n);
-				command.erase(0, command.find_first_not_of(" \t", n));
-			}
-		}
-	};
+            if (group_it != groups.cend()) {
+                group = *group_it;
+            } else {
+                // we know that qualifier is the first argument, but we don't have any group that matches -- we still need to delete the argument before sending the command
+                std::string::size_type n = command.find_first_not_of(" \t", 0);
+                n = command.find_first_of(" \t", n);
+                command.erase(0, command.find_first_not_of(" \t", n));
+            }
+        }
+    };
 
-	replace_qualifier("group");
-	replace_qualifier("raid");
-	replace_qualifier("zone");
+    replace_qualifier("group");
+    replace_qualifier("raid");
+    replace_qualifier("zone");
 
     std::set<std::string> groups = Node::get().get_all_groups();
-	if (group.find("/") == 0) {
-		// we can assume that '/' signifies the start of a command, so we haven't specified a group
-		group = "all";
-	} else if (groups.find(group) != groups.end()) {
+    if (group.find("/") == 0) {
+        // we can assume that '/' signifies the start of a command, so we haven't specified a group
+        group = "all";
+    } else if (groups.find(group) != groups.end()) {
         std::string::size_type n = command.find_first_not_of(" \t", 0);
         n = command.find_first_of(" \t", n);
         command.erase(0, command.find_first_not_of(" \t", n));
-	} else {
-		SyntaxError("Could not find channel %s", group.c_str());
-		return;
-	}
+    } else {
+        SyntaxError("Could not find channel %s", group.c_str());
+        return;
+    }
 
     if (group.empty() || command.empty())
         WriteChatColor("Syntax: /dgaexecute <group> <command> -- direct group to execute command", USERCOLOR_DEFAULT);
@@ -2514,21 +2903,21 @@ PLUGIN_API VOID DGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 }
 
 PLUGIN_API VOID DGGAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
-	char newLine[MAX_STRING] = { 0 };
-	sprintf_s(newLine, "group %s", szLine);
-	DGAexecuteCommand(pSpawn, newLine);
+    char newLine[MAX_STRING] = { 0 };
+    sprintf_s(newLine, "group %s", szLine);
+    DGAexecuteCommand(pSpawn, newLine);
 }
 
 PLUGIN_API VOID DGRAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
-	char newLine[MAX_STRING] = { 0 };
-	sprintf_s(newLine, "raid %s", szLine);
-	DGAexecuteCommand(pSpawn, newLine);
+    char newLine[MAX_STRING] = { 0 };
+    sprintf_s(newLine, "raid %s", szLine);
+    DGAexecuteCommand(pSpawn, newLine);
 }
 
 PLUGIN_API VOID DGZAexecuteCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
-	char newLine[MAX_STRING] = { 0 };
-	sprintf_s(newLine, "zone %s", szLine);
-	DGAexecuteCommand(pSpawn, newLine);
+    char newLine[MAX_STRING] = { 0 };
+    sprintf_s(newLine, "zone %s", szLine);
+    DGAexecuteCommand(pSpawn, newLine);
 }
 
 PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
@@ -2541,7 +2930,6 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 
     std::string query;
     std::string output;
-    std::string timeout;
     bool drop = false;
 
     int current_param = 1;
@@ -2549,13 +2937,12 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         GetArg(szParam, szLine, ++current_param);
         if (!strncmp(szParam, "-q", 2)) {
             GetArg(szParam, szLine, ++current_param);
-            if (szParam) query = szParam;
+            if (szParam)
+                query = szParam;
         } else if (!strncmp(szParam, "-o", 2)) {
             GetArg(szParam, szLine, ++current_param);
-            if (szParam) output = szParam;
-        } else if (!strncmp(szParam, "-t", 2)) {
-            GetArg(szParam, szLine, ++current_param);
-            if (szParam) timeout = szParam;
+            if (szParam)
+                output = szParam;
         } else if (!strncmp(szParam, "-d", 2)) {
             drop = true;
         } else if (szParam[0] == '-') {
@@ -2564,10 +2951,13 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         }
     } while ((szParam && szParam[0] != '\0') || current_param > 10);
 
-    if (name.empty() || query.empty()) {
+    if (drop && !name.empty()) {
+        if (query.empty())
+            Node::get().forget_all(name);
+        else
+            Node::get().forget(name, query);
+    } else if (name.empty() || query.empty()) {
         WriteChatColor("Syntax: /dobserve <name> [-q <query>] [-o <result>] [-drop] -- add an observer on name and update values in result, or drop the observer", USERCOLOR_DEFAULT);
-    } else if (drop) {
-        Node::get().forget(name, query);
     } else {
         auto peers = Node::get().get_peers();
         if (peers.find(name) == peers.end()) {
@@ -2577,15 +2967,6 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 
         if (!Node::get().can_read(name, query))
             Node::get().whisper<Observe>(name, query, output);
-
-        if (timeout.empty()) timeout = ReadVar("General", "Query Timeout");
-
-        PCHARINFO pChar = GetCharInfo();
-        if (pChar) {
-            CHAR szDelay[MAX_STRING] = { 0 };
-            strcpy_s(szDelay, (timeout + " ${DanNet[" + name + "].OReceived[\"" + Node::get().trim_query(query) + "\"]}").c_str());
-            Delay(pChar->pSpawn, szDelay);
-        }
     }
 }
 
@@ -2606,13 +2987,16 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         GetArg(szParam, szLine, ++current_param);
         if (!strncmp(szParam, "-q", 2)) {
             GetArg(szParam, szLine, ++current_param);
-            if (szParam) query = szParam;
+            if (szParam)
+                query = szParam;
         } else if (!strncmp(szParam, "-o", 2)) {
             GetArg(szParam, szLine, ++current_param);
-            if (szParam) output = szParam;
+            if (szParam)
+                output = szParam;
         } else if (!strncmp(szParam, "-t", 2)) {
             GetArg(szParam, szLine, ++current_param);
-            if (szParam) timeout = szParam;
+            if (szParam)
+                timeout = szParam;
         } else if (szParam[0] == '-') {
             // don't understand the switch, let's just fast-forward
             ++current_param;
@@ -2641,7 +3025,8 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             return;
         }
 
-        if (timeout.empty()) timeout = ReadVar("General", "Query Timeout");
+        if (timeout.empty())
+            timeout = ReadVar("General", "Query Timeout");
 
         PCHARINFO pChar = GetCharInfo();
         if (pChar) {
@@ -2656,7 +3041,7 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
 
 // Called once, when the plugin is to initialize
 PLUGIN_API VOID InitializePlugin(VOID) {
-	DebugSpewAlways("Initializing MQ2DanNet");
+    DebugSpewAlways("Initializing MQ2DanNet");
 
     Node::get().startup();
 
@@ -2680,6 +3065,22 @@ PLUGIN_API VOID InitializePlugin(VOID) {
         Node::get().observe_delay(atoi(GetDefault("Observe Delay").c_str()));
     }
 
+    CHAR evasive[MAX_STRING] = { 0 };
+    strcpy_s(evasive, ReadVar("Evasive").c_str());
+    if (IsNumber(evasive)) {
+        Node::get().evasive(atoi(evasive));
+    } else {
+        Node::get().evasive(atoi(GetDefault("Evasive").c_str()));
+    }
+
+    CHAR expired[MAX_STRING] = { 0 };
+    strcpy_s(expired, ReadVar("Expired").c_str());
+    if (IsNumber(expired)) {
+        Node::get().expired(atoi(expired));
+    } else {
+        Node::get().expired(atoi(GetDefault("Expired").c_str()));
+    }
+
     CHAR keepalive[MAX_STRING] = { 0 };
     strcpy_s(keepalive, ReadVar("Keepalive").c_str());
     if (IsNumber(keepalive)) {
@@ -2697,7 +3098,7 @@ PLUGIN_API VOID InitializePlugin(VOID) {
     AddCommand("/dgexecute", DGexecuteCommand);
     AddCommand("/dggexecute", DGGexecuteCommand);
     AddCommand("/dgrexecute", DGRexecuteCommand);
-	AddCommand("/dgzexecute", DGZexecuteCommand);
+    AddCommand("/dgzexecute", DGZexecuteCommand);
     AddCommand("/dgaexecute", DGAexecuteCommand);
     AddCommand("/dggaexecute", DGGAexecuteCommand);
     AddCommand("/dgraexecute", DGRAexecuteCommand);
@@ -2715,7 +3116,7 @@ PLUGIN_API VOID InitializePlugin(VOID) {
 
 // Called once, when the plugin is to shutdown
 PLUGIN_API VOID ShutdownPlugin(VOID) {
-	DebugSpewAlways("Shutting down MQ2DanNet");
+    DebugSpewAlways("Shutting down MQ2DanNet");
     Node::get().exit();
 
     // this is Windows-specific and needs to be done to free some dangling select() threads
@@ -2752,10 +3153,10 @@ PLUGIN_API VOID ShutdownPlugin(VOID) {
 
 // Called once directly after initialization, and then every time the gamestate changes
 PLUGIN_API VOID SetGameState(DWORD GameState) {
-    // TODO: Figure out why we can't re-use the instance through zoning 
+    // TODO: Figure out why we can't re-use the instance through zoning
     // (it should be maintainable through the GAMESTATE_LOGGINGIN -> GAMESTATE_INGAME cycle, but causes my node instance to get memset to null)
     if (GameState == GAMESTATE_LOGGINGIN || GameState == GAMESTATE_UNLOADING) { // UNLOADING is /q
-        Node::get().save_channels(); // these will get rejoined on actor load
+        Node::get().save_channels();                                            // these will get rejoined on actor load
         Node::get().exit();
         Node::get().shutdown();
     }
@@ -2810,71 +3211,73 @@ PLUGIN_API VOID OnCleanUI(VOID) {
 
 // This is called every time MQ pulses
 PLUGIN_API VOID OnPulse(VOID) {
-	if (Node::get().last_group_check() + 1000 < MQGetTickCount64()) {
-		// time to check our group!
-		Node::get().last_group_check(MQGetTickCount64());
+    Node::get().recv();
 
-		// we need to get all channels we have joined that are group channels no matter what the case
-		std::set<std::string> groups = ([]() {
-			std::set<std::string> own_groups = Node::get().get_own_groups();
-			std::set<std::string> filtered_groups;
-			std::copy_if(own_groups.cbegin(), own_groups.cend(), std::inserter(filtered_groups, filtered_groups.begin()), [](const std::string& group) {
-				return group.find("group_") == 0 || group.find("raid_") == 0 || group.find("zone_") == 0;
-			});
+    if (Node::get().last_group_check() + 1000 < MQGetTickCount64()) {
+        // time to check our group!
+        Node::get().last_group_check(MQGetTickCount64());
 
-			return filtered_groups;
-		})();
+        // we need to get all channels we have joined that are group channels no matter what the case
+        std::set<std::string> groups = ([]() {
+            std::set<std::string> own_groups = Node::get().get_own_groups();
+            std::set<std::string> filtered_groups;
+            std::copy_if(own_groups.cbegin(), own_groups.cend(), std::inserter(filtered_groups, filtered_groups.begin()), [](const std::string& group) {
+                return group.find("group_") == 0 || group.find("raid_") == 0 || group.find("zone_") == 0;
+            });
 
-		auto check_and_join = [&groups](const std::string& prefix, const std::function<bool(std::string& name)>& get_name) {
-			std::string name;
-			if (get_name(name)) {
-				name = Node::get().get_full_name(name);
-				auto group_it = groups.find(prefix + name);
-				if (group_it != groups.end()) {
-					// okay, we are already in the group we care about, but we need to leave all the other groups we don't care about.
-					groups.erase(group_it);
-				} else {
-					// we need to leave all the groups in groups, but we also need to join our new group
-					Node::get().join(prefix + name);
-				}
-			}
-		};
+            return filtered_groups;
+        })();
 
-		check_and_join("group_", [](std::string& name) {
-			PCHARINFO pChar = GetCharInfo();
-			if (pChar && pChar->pGroupInfo && pChar->pGroupInfo->pLeader) {
-				char leader_name_cstr[MAX_STRING] = { 0 };
-				GetCXStr(pChar->pGroupInfo->pLeader->pName, leader_name_cstr, sizeof(leader_name_cstr));
-				name = std::string(leader_name_cstr);
-				return true;
-			}
+        auto check_and_join = [&groups](const std::string& prefix, const std::function<bool(std::string & name)>& get_name) {
+            std::string name;
+            if (get_name(name)) {
+                name = Node::get().get_full_name(name);
+                auto group_it = groups.find(prefix + name);
+                if (group_it != groups.end()) {
+                    // okay, we are already in the group we care about, but we need to leave all the other groups we don't care about.
+                    groups.erase(group_it);
+                } else {
+                    // we need to leave all the groups in groups, but we also need to join our new group
+                    Node::get().join(prefix + name);
+                }
+            }
+        };
 
-			return false;
-		});
+        check_and_join("group_", [](std::string& name) {
+            PCHARINFO pChar = GetCharInfo();
+            if (pChar && pChar->pGroupInfo && pChar->pGroupInfo->pLeader) {
+                char leader_name_cstr[MAX_STRING] = { 0 };
+                GetCXStr(pChar->pGroupInfo->pLeader->pName, leader_name_cstr, sizeof(leader_name_cstr));
+                name = std::string(leader_name_cstr);
+                return true;
+            }
 
-		check_and_join("raid_", [](std::string& name) {
-			if (pRaid && pRaid->RaidLeaderName[0]) {
-				name = std::string(pRaid->RaidLeaderName);
-				return true;
-			}
-			return false;
-		});
+            return false;
+        });
 
-		check_and_join("zone_", [](std::string& name) {
-			PZONEINFO pZone = reinterpret_cast<PZONEINFO>(pZoneInfo);
-			if (pZone) {
-				name = std::string(pZone->ShortName);
-				return true;
-			}
+        check_and_join("raid_", [](std::string& name) {
+            if (pRaid && pRaid->RaidLeaderName[0]) {
+                name = std::string(pRaid->RaidLeaderName);
+                return true;
+            }
+            return false;
+        });
 
-			return false;
-		});
+        check_and_join("zone_", [](std::string& name) {
+            PZONEINFO pZone = reinterpret_cast<PZONEINFO>(pZoneInfo);
+            if (pZone) {
+                name = std::string(pZone->ShortName);
+                return true;
+            }
 
-		// at this point we are guaranteed that this only has bad groups in it
-		for (auto group : groups) {
-			Node::get().leave(group);
-		}
-	}
+            return false;
+        });
+
+        // at this point we are guaranteed that this only has bad groups in it
+        for (auto group : groups) {
+            Node::get().leave(group);
+        }
+    }
 
     Node::get().do_next();
     Node::get().publish<Update>();
