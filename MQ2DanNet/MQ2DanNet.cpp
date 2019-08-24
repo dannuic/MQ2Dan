@@ -38,7 +38,7 @@
 #ifdef LOCAL_BUILD
 #include <zyre.h>
 #else
-#include "..\MQ2DanNetDeps\libzyre\include\zyre.h"
+#include "..\MQ2DanNet\Deps\libzyre\include\zyre.h"
 #endif
 
 #include "../MQ2Plugin.h"
