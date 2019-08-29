@@ -44,21 +44,15 @@
     <IntDir>$(ProjectDir)..\build\$(Configuration)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <OutDir>$(ProjectDir)..\..\$(Configuration)\</OutDir>
+    <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)..\build\$(Configuration)\</IntDir>
     <LinkIncremental>false</LinkIncremental>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <Link />
     <ClCompile>
-      <AdditionalIncludeDirectories>$(ProjectDir)deps\archive;$(ProjectDir)deps\libzmq\include;$(ProjectDir)deps\libczmq\include;$(ProjectDir)deps\libzyre\include;$(ProjectDir)..;$(ProjectDir)..\..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)deps\archive;$(ProjectDir)deps\libzmq\include;$(ProjectDir)deps\libczmq\include;$(ProjectDir)deps\libzyre\include;$(ProjectDir)..;$(ProjectDir)..\..\..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;CINTERFACE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <WarningLevel>Level3</WarningLevel>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <StructMemberAlignment>4Bytes</StructMemberAlignment>
-      <BufferSecurityCheck>false</BufferSecurityCheck>
-      <FunctionLevelLinking>false</FunctionLevelLinking>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
     <Link>
       <AdditionalDependencies>MQ2Main.lib;libzmq.lib;libczmq.lib;libzyre.lib;libczmq.lib;libzyre.lib;libzmq.lib;ws2_32.lib;rpcrt4.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -70,14 +64,8 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <Link />
     <ClCompile>
-      <AdditionalIncludeDirectories>$(ProjectDir)deps\archive;$(ProjectDir)deps\libzmq\include;$(ProjectDir)deps\libczmq\include;$(ProjectDir)deps\libzyre\include;$(ProjectDir)..;$(ProjectDir)..\..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)deps\archive;$(ProjectDir)deps\libzmq\include;$(ProjectDir)deps\libczmq\include;$(ProjectDir)deps\libzyre\include;$(ProjectDir)..;$(ProjectDir)..\..\..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;CINTERFACE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <WarningLevel>Level3</WarningLevel>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <StructMemberAlignment>4Bytes</StructMemberAlignment>
-      <BufferSecurityCheck>false</BufferSecurityCheck>
-      <FunctionLevelLinking>false</FunctionLevelLinking>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
     <PostBuildEvent>
       <Command>
