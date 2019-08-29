@@ -314,7 +314,7 @@ class Archive
             uint32_t toRead = len;
             while(toRead != 0)
             {
-                uint32_t l = min(toRead, (uint32_t)sizeof(buffer));
+                uint32_t l = std::min(toRead, (uint32_t)sizeof(buffer));
                 m_stream.read(buffer, l);
                 if(!m_stream)
                     throw std::runtime_error("malformed data");

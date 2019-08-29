@@ -34,6 +34,10 @@
 // are shown below. Remove the ones your plugin does not use.  Always use Initialize
 // and Shutdown for setup and cleanup, do NOT do it in DllMain.
 
+#if !defined(NOMINMAX)
+#define NOMINMAX
+#endif
+
 // IMPORTANT! This must be included first because it includes <winsock2.h>, which needs to come before <windows.h> -- we cannot guarantee no inclusion of <windows.h> in other headers
 #ifdef LOCAL_BUILD
 #include <zyre.h>
@@ -3255,9 +3259,7 @@ PLUGIN_API VOID OnPulse(VOID) {
         check_and_join("group_", [](std::string& name) {
             PCHARINFO pChar = GetCharInfo();
             if (pChar && pChar->pGroupInfo && pChar->pGroupInfo->pLeader) {
-                char leader_name_cstr[MAX_STRING] = { 0 };
-                GetCXStr(pChar->pGroupInfo->pLeader->pName, leader_name_cstr, sizeof(leader_name_cstr));
-                name = std::string(leader_name_cstr);
+                name = std::string(pChar->pGroupInfo->pLeader->Name);
                 return true;
             }
 
