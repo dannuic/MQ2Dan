@@ -12,7 +12,7 @@
 #include <string>
 
 #include "Node.h"
-#include "../MQ2Plugin.h"
+#include <MQ2Plugin.h>
 
 using namespace MQ2DanNet;
 

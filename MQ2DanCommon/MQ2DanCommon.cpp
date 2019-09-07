@@ -5,7 +5,7 @@
 // are shown below. Remove the ones your plugin does not use.  Always use Initialize
 // and Shutdown for setup and cleanup, do NOT do it in DllMain.
 
-#include "../MQ2Plugin.h"
+#include <MQ2Plugin.h>
 
 #include "MQ2DanCommon.h"
 #include "MQ2DanIPC.h"
