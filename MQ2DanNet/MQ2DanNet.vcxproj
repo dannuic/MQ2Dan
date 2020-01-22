@@ -34,8 +34,7 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets">
-    <Import Project="$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), src\Plugin.props))\src\Plugin.props"
-            Condition=" '$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), src\Plugin.props))' != '' " />
+    <Import Project="$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), src\Plugin.props))\src\Plugin.props" Condition=" '$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), src\Plugin.props))' != '' " />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
@@ -53,6 +52,7 @@
     <ClCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)deps\archive;$(ProjectDir)deps\libzmq\include;$(ProjectDir)deps\libczmq\include;$(ProjectDir)deps\libzyre\include;$(ProjectDir)..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;CINTERFACE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
       <AdditionalDependencies>MQ2Main.lib;libzmq.lib;libczmq.lib;libzyre.lib;libczmq.lib;libzyre.lib;libzmq.lib;ws2_32.lib;rpcrt4.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>

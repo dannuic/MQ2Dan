@@ -131,10 +131,10 @@ public:
     MQ2DANNET_NODE_API static std::string init_string(const char* szStr);
 
     template <typename T>
-    static const std::string name() { return T::name(); }
+    static std::string name() { return T::name(); }
 
     template <typename T>
-    static const std::function<bool(std::stringstream&&)> callback() {
+    static std::function<bool(std::stringstream&&)> callback() {
         return T::callback;
     }
 
@@ -192,7 +192,7 @@ public:
         std::map<unsigned int, Query> updated_values;
 
         _observer_map.foreach ([this, &updated_values](std::pair<unsigned int, Query> observer) -> void {
-            auto tick = MQGetTickCount64();
+            const auto tick = MQGetTickCount64();
             if (tick - observer.second.last >= std::max<unsigned __int64>(10 * observer.second.benchmark, observe_delay())) { // wait at least a second between updates
                 std::string group = observer_group(observer.first);
                 std::string query_result = parse_query(observer.second.query);
@@ -204,7 +204,7 @@ public:
 
                 Query new_query(observer.second.query);
 
-                auto proc_time = MQGetTickCount64() - tick;
+                const auto proc_time = MQGetTickCount64() - tick;
                 if (observer.second.benchmark == 0)
                     new_query.benchmark = proc_time;
                 else
@@ -216,8 +216,8 @@ public:
             }
         });
 
-        for (auto it = updated_values.begin(); it != updated_values.end(); ++it) {
-            _observer_map.upsert(it->first, it->second);
+        for (auto &updated_value : updated_values) {
+            _observer_map.upsert(updated_value.first, updated_value.second);
         }
     }
 
@@ -324,7 +324,8 @@ private:
 
         void remove_if(const std::function<bool(T&)>& f) {
             _mutex.lock();
-            std::remove_if(_queue.begin(), _queue.end(), f);
+			// TODO: Confirm this is correct handling of the nodiscard / intention
+            static_cast<void>(std::remove_if(_queue.begin(), _queue.end(), f));
             _mutex.unlock();
         }
     };
@@ -601,7 +602,7 @@ public:
     void query_result(const Observation& obs);
     std::string trim_query(const std::string& query);
     std::string parse_query(const std::string& query);
-    MQ2TYPEVAR parse_response(const std::string& output, const std::string& data);
+    MQTypeVar parse_response(const std::string& output, const std::string& data);
     std::string peer_address(const std::string& name);
 
     bool debugging(bool debugging) {
@@ -1547,7 +1548,7 @@ std::string MQ2DanNet::Node::parse_query(const std::string& query) {
     return szQuery;
 }
 
-MQ2TYPEVAR MQ2DanNet::Node::parse_response(const std::string& output, const std::string& data) {
+MQTypeVar MQ2DanNet::Node::parse_response(const std::string& output, const std::string& data) {
     // we need to pass a string data into here because we need to make sure that the output type can handle
     // the data we give it, which is handled in `FromString`, and if we aren't in a macro we are just going
     // to write it out anyway.
@@ -1555,7 +1556,7 @@ MQ2TYPEVAR MQ2DanNet::Node::parse_response(const std::string& output, const std:
     if (!output.empty() && gMacroBlock) { // let's make sure a macro is running here
         CHAR szOutput[MAX_STRING] = { 0 };
         strcpy_s(szOutput, output.c_str());
-        PDATAVAR pVar = FindMQ2DataVariable(szOutput);
+        MQDataVar* pVar = FindMQ2DataVariable(szOutput);
         if (pVar) {
             CHAR szData[MAX_STRING] = { 0 };
             strcpy_s(szData, data.c_str());
@@ -1570,17 +1571,17 @@ MQ2TYPEVAR MQ2DanNet::Node::parse_response(const std::string& output, const std:
         }
     } else {
         // if we aren't in a macro or we have no output, we are dealing with a string
-        MQ2TYPEVAR Result;
+        MQTypeVar Result;
         strcpy_s(DataTypeTemp, data.c_str());
         Result.Ptr = &DataTypeTemp[0];
-        Result.Type = pStringType;
+        Result.Type = mq::datatypes::pStringType;
         if (debugging())
             WriteChatf("%s", data.c_str());
 
         return Result;
     }
 
-    MQ2TYPEVAR Result;
+    MQTypeVar Result;
     Result.Type = 0;
     Result.Int64 = 0;
     return Result;
@@ -1811,7 +1812,7 @@ std::stringstream MQ2DanNet::Query::pack(const std::string& recipient, const std
             ar >> from >> group >> data;
 
             std::string output = Node::get().query().output;
-            MQ2TYPEVAR Result = Node::get().parse_response(output, data);
+            MQTypeVar Result = Node::get().parse_response(output, data);
 
             // this actually only determines when the delay breaks.
             CHAR szBuf[MAX_STRING] = { 0 };
@@ -1954,7 +1955,7 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
         strcpy_s(szOutput, output.c_str());
 
         if (output.empty() || FindMQ2DataVariable(szOutput)) {
-            MQ2TYPEVAR Result = Node::get().parse_response(output, data);
+            MQTypeVar Result = Node::get().parse_response(output, data);
 
             CHAR szBuf[MAX_STRING] = { 0 };
             if (Result.Type)
@@ -2057,7 +2058,7 @@ VOID SetVar(const std::string& section, const std::string& key, const std::strin
     WritePrivateProfileString(section.c_str(), key.c_str(), val == GetDefault(val) ? NULL : val.c_str(), INIFileName);
 }
 
-BOOL ParseBool(const std::string& section, const std::string& key, const std::string& input, bool current) {
+bool ParseBool(const std::string& section, const std::string& key, const std::string& input, bool current) {
     std::string final_input = Node::init_string(input.c_str());
     if (final_input == "on" || final_input == "off")
         WriteChatf("\ax\atMQ2DanNet:\ax Turning \ao%s\ax to \ar%s\ax.", key.c_str(), input.c_str());
@@ -2081,11 +2082,11 @@ BOOL ParseBool(const std::string& section, const std::string& key, const std::st
     }
 }
 
-BOOL ReadBool(const std::string& section, const std::string& key) {
+bool ReadBool(const std::string& section, const std::string& key) {
     return Node::init_string(ReadVar(section, key).c_str()) == "on" || Node::init_string(ReadVar(section, key).c_str()) == "true";
 }
 
-BOOL ReadBool(const std::string& key) {
+bool ReadBool(const std::string& key) {
     return ReadBool("General", key);
 }
 
@@ -2131,8 +2132,8 @@ public:
         TypeMember(Received);
     }
 
-    bool GetMember(MQ2VARPTR VarPtr, char* Member, char* Index, MQ2TYPEVAR& Dest) {
-        PMQ2TYPEMEMBER pMember = MQ2DanObservationType::FindMember(Member);
+    bool GetMember(MQVarPtr VarPtr, char* Member, char* Index, MQTypeVar& Dest) {
+        MQTypeMember* pMember = MQ2DanObservationType::FindMember(Member);
         if (!pMember)
             return false;
 
@@ -2143,14 +2144,14 @@ public:
         switch ((Members)pMember->ID) {
         case Received:
             Dest.UInt64 = pObservation->received;
-            Dest.Type = pInt64Type;
+            Dest.Type = mq::datatypes::pInt64Type;
             return true;
         }
 
         return false;
     }
 
-    bool ToString(MQ2VARPTR VarPtr, char* Destination) {
+    bool ToString(MQVarPtr VarPtr, char* Destination) {
         Node::Observation* pObservation = ((Node::Observation*)VarPtr.Ptr);
         if (!pObservation)
             return false;
@@ -2159,17 +2160,17 @@ public:
         return true;
     }
 
-    void InitVariable(MQ2VARPTR& VarPtr) {
+    void InitVariable(MQVarPtr& VarPtr) {
         VarPtr.Ptr = malloc(sizeof(Node::Observation));
         VarPtr.HighPart = 0;
         ZeroMemory(VarPtr.Ptr, sizeof(Node::Observation));
     }
 
-    void FreeVariable(MQ2VARPTR& VarPtr) {
+    void FreeVariable(MQVarPtr& VarPtr) {
         free(VarPtr.Ptr);
     }
 
-    bool FromData(MQ2VARPTR& VarPtr, MQ2TYPEVAR& Source) {
+    bool FromData(MQVarPtr& VarPtr, MQTypeVar& Source) {
         if (Source.Type == pDanObservationType) {
             memcpy(VarPtr.Ptr, Source.Ptr, sizeof(Node::Observation));
             return true;
@@ -2178,7 +2179,7 @@ public:
         return false;
     }
 
-    bool FromString(MQ2VARPTR& VarPtr, char* Source) { return false; }
+    bool FromString(MQVarPtr& VarPtr, char* Source) { return false; }
 };
 
 class MQ2DanNetType* pDanNetType = nullptr;
@@ -2259,13 +2260,13 @@ public:
         TypeMember(QueryReceived);
     }
 
-    bool GetMember(MQ2VARPTR VarPtr, char* Member, char* Index, MQ2TYPEVAR& Dest) {
+    bool GetMember(MQVarPtr VarPtr, char* Member, char* Index, MQTypeVar& Dest) {
         _buf[0] = '\0';
 
         std::string local_peer = _peer;
         _peer.clear();
 
-        PMQ2TYPEMEMBER pMember = MQ2DanNetType::FindMember(Member);
+        MQTypeMember* pMember = MQ2DanNetType::FindMember(Member);
         if (!pMember)
             return false;
 
@@ -2273,53 +2274,53 @@ public:
         case Name:
             strcpy_s(_buf, Node::get().get_name(Node::get().name()).c_str());
             Dest.Ptr = &_buf[0];
-            Dest.Type = pStringType;
+            Dest.Type = mq::datatypes::pStringType;
             return true;
         case Version:
             sprintf_s(_buf, "%1.4f", MQ2Version);
             Dest.Ptr = &_buf[0];
-            Dest.Type = pStringType;
+            Dest.Type = mq::datatypes::pStringType;
             return true;
         case Debug:
             Dest.DWord = Node::get().debugging();
-            Dest.Type = pBoolType;
+            Dest.Type = mq::datatypes::pBoolType;
             return true;
         case LocalEcho:
             Dest.DWord = Node::get().local_echo();
-            Dest.Type = pBoolType;
+            Dest.Type = mq::datatypes::pBoolType;
             return true;
         case CommandEcho:
             Dest.DWord = Node::get().command_echo();
-            Dest.Type = pBoolType;
+            Dest.Type = mq::datatypes::pBoolType;
             return true;
         case FullNames:
             Dest.DWord = Node::get().full_names();
-            Dest.Type = pBoolType;
+            Dest.Type = mq::datatypes::pBoolType;
             return true;
         case FrontDelim:
             Dest.DWord = Node::get().front_delimiter();
-            Dest.Type = pBoolType;
+            Dest.Type = mq::datatypes::pBoolType;
             return true;
         case Timeout:
             strcpy_s(_buf, ReadVar("General", "Query Timeout").c_str());
             Dest.Ptr = &_buf[0];
-            Dest.Type = pStringType;
+            Dest.Type = mq::datatypes::pStringType;
             return true;
         case ObserveDelay:
             Dest.DWord = Node::get().observe_delay();
-            Dest.Type = pIntType;
+            Dest.Type = mq::datatypes::pIntType;
             return true;
         case Evasive:
             Dest.DWord = Node::get().evasive();
-            Dest.Type = pIntType;
+            Dest.Type = mq::datatypes::pIntType;
             return true;
         case Expired:
             Dest.DWord = Node::get().expired();
-            Dest.Type = pIntType;
+            Dest.Type = mq::datatypes::pIntType;
             return true;
         case Keepalive:
             Dest.DWord = Node::get().keepalive();
-            Dest.Type = pIntType;
+            Dest.Type = mq::datatypes::pIntType;
             return true;
         case PeerCount:
             if (IsNumber(Index)) {
@@ -2338,7 +2339,7 @@ public:
                 _peers = Node::get().get_peers();
                 Dest.DWord = _peers.size();
             }
-            Dest.Type = pIntType;
+            Dest.Type = mq::datatypes::pIntType;
             return true;
         case Peers:
             if (IsNumber(Index)) {
@@ -2377,12 +2378,12 @@ public:
             }
 
             Dest.Ptr = &_buf[0];
-            Dest.Type = pStringType;
+            Dest.Type = mq::datatypes::pStringType;
             return true;
         case GroupCount:
             _groups = Node::get().get_all_groups();
             Dest.DWord = _groups.size();
-            Dest.Type = pIntType;
+            Dest.Type = mq::datatypes::pIntType;
             return true;
         case Groups:
             if (IsNumber(Index)) {
@@ -2399,12 +2400,12 @@ public:
                 strcpy_s(_buf, CreateArray(Node::get().get_all_groups()).c_str());
             }
             Dest.Ptr = &_buf[0];
-            Dest.Type = pStringType;
+            Dest.Type = mq::datatypes::pStringType;
             return true;
         case JoinedCount:
             _joined = Node::get().get_own_groups();
             Dest.DWord = _groups.size();
-            Dest.Type = pIntType;
+            Dest.Type = mq::datatypes::pIntType;
             return true;
         case Joined:
             if (IsNumber(Index)) {
@@ -2421,7 +2422,7 @@ public:
                 strcpy_s(_buf, CreateArray(Node::get().get_own_groups()).c_str());
             }
             Dest.Ptr = &_buf[0];
-            Dest.Type = pStringType;
+            Dest.Type = mq::datatypes::pStringType;
             return true;
         case Q:
         case Query:
@@ -2437,7 +2438,7 @@ public:
         case QueryReceived:
             _current_observation = Node::Observation(Node::get().query());
             Dest.UInt64 = _current_observation.received;
-            Dest.Type = pInt64Type;
+            Dest.Type = mq::datatypes::pInt64Type;
             return true;
         case O:
         case Observe:
@@ -2456,7 +2457,7 @@ public:
                     strcpy_s(_buf, CreateArray(observers).c_str());
 
                     Dest.Ptr = &_buf[0];
-                    Dest.Type = pStringType;
+                    Dest.Type = mq::datatypes::pStringType;
                     return true;
                 }
             } else {
@@ -2469,7 +2470,7 @@ public:
                 }
 
                 Dest.Ptr = &_buf[0];
-                Dest.Type = pStringType;
+                Dest.Type = mq::datatypes::pStringType;
                 return true;
             }
         case OCount:
@@ -2479,7 +2480,7 @@ public:
             } else {
                 Dest.DWord = Node::get().observer_count();
             }
-            Dest.Type = pIntType;
+            Dest.Type = mq::datatypes::pIntType;
             return true;
         case OSet:
         case ObserveSet:
@@ -2499,7 +2500,7 @@ public:
                         Dest.DWord = 0;
                     }
                 }
-                Dest.Type = pBoolType;
+                Dest.Type = mq::datatypes::pBoolType;
                 return true;
             } else
                 return false;
@@ -2508,7 +2509,7 @@ public:
             if (!local_peer.empty() && Index && Index[0] != '\0') {
                 _current_observation = Node::get().read(local_peer, Node::get().trim_query(Index));
                 Dest.UInt64 = _current_observation.received;
-                Dest.Type = pInt64Type;
+                Dest.Type = mq::datatypes::pInt64Type;
                 return true;
             } else
                 return false;
@@ -2524,7 +2525,7 @@ public:
         _peer = peer;
     }
 
-    bool ToString(MQ2VARPTR VarPtr, char* Destination) {
+    bool ToString(MQVarPtr VarPtr, char* Destination) {
         if (_peer.empty())
             return false;
 
@@ -2533,11 +2534,11 @@ public:
         return true;
     }
 
-    bool FromData(MQ2VARPTR& VarPtr, MQ2TYPEVAR& Source) { return false; }
-    bool FromString(MQ2VARPTR& VarPtr, char* Source) { return false; }
+    bool FromData(MQVarPtr& VarPtr, MQTypeVar& Source) { return false; }
+    bool FromString(MQVarPtr& VarPtr, char* Source) { return false; }
 };
 
-BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR& Dest) {
+bool dataDanNet(const char* Index, MQTypeVar& Dest) {
     Dest.DWord = 1;
     Dest.Type = pDanNetType;
 
@@ -2962,7 +2963,7 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             // don't understand the switch, let's just fast-forward
             ++current_param;
         }
-    } while ((szParam && szParam[0] != '\0') || current_param > 10);
+    } while ((szParam && szParam[0]) || current_param > 10);
 
     if (drop && !name.empty()) {
         if (query.empty())
@@ -3000,27 +3001,27 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         GetArg(szParam, szLine, ++current_param);
         if (!strncmp(szParam, "-q", 2)) {
             GetArg(szParam, szLine, ++current_param);
-            if (szParam)
+            if (szParam[0])
                 query = szParam;
         } else if (!strncmp(szParam, "-o", 2)) {
             GetArg(szParam, szLine, ++current_param);
-            if (szParam)
+            if (szParam[0])
                 output = szParam;
         } else if (!strncmp(szParam, "-t", 2)) {
             GetArg(szParam, szLine, ++current_param);
-            if (szParam)
+            if (szParam[0])
                 timeout = szParam;
         } else if (szParam[0] == '-') {
             // don't understand the switch, let's just fast-forward
             ++current_param;
         }
-    } while ((szParam && szParam[0] != '\0') || current_param > 10);
+    } while ((szParam && szParam[0]) || current_param > 10);
 
     if (name.empty() || query.empty()) {
         WriteChatColor("Syntax: /dquery <name> [-q <query>] [-o <result>] [-t <timeout>] -- execute query on name and store return in result", USERCOLOR_DEFAULT);
     } else if (name == Node::get().name()) {
         // this is a self-query, let's just return the evaluation of the query
-        MQ2TYPEVAR Result = Node::get().parse_response(output, Node::get().parse_query(query).c_str());
+        MQTypeVar Result = Node::get().parse_response(output, Node::get().parse_query(query).c_str());
         CHAR szBuf[MAX_STRING] = { 0 };
         if (Result.Type)
             Result.Type->ToString(Result.VarPtr, szBuf);
