@@ -157,6 +157,7 @@ namespace EndianSwapper
         };
 }
 
+
 template <class STREAM_TYPE>
 class Archive
 {

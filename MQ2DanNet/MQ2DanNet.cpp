@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7514 -- fixed an issue where variables that went out of scope wouldn't remove observers remotely
  * plure:   version 0.7513 -- added the ability for other plugin's to check if someone is connected to mq2dannet
  * dannuic: version 0.7512 -- added keepalive to main actor thread with configuration option for frequency, and added options for expire and evasive timeouts
  * dannuic: version 0.7511 -- fixed bug associated with high CPU usage (removed * default to interface) and made interface UI a little better
@@ -65,7 +66,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7513);
+PLUGIN_VERSION(0.7514);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -90,7 +91,7 @@ PreSetup("MQ2DanNet");
         _Name& operator=(const _Name&) = delete;                                    \
         _Name(_Name&&) = delete;                                                    \
         _Name& operator=(_Name&&) = delete;                                         \
-    }
+    };
 
 namespace MQ2DanNet {
 class Node final {
@@ -176,6 +177,7 @@ public:
     MQ2DANNET_NODE_API void forget(const std::string& group);
     MQ2DANNET_NODE_API void forget(const std::string& name, const std::string& query);
     MQ2DANNET_NODE_API void forget_all(const std::string& name);
+    MQ2DANNET_NODE_API void forget_if(bool (*predicate)(const Observation& observation));
     MQ2DANNET_NODE_API void update(const std::string& group, const std::string& data, const std::string& output);
     MQ2DANNET_NODE_API const Observation read(const std::string& group);
     MQ2DANNET_NODE_API const Observation read(const std::string& name, const std::string& query);
@@ -216,7 +218,7 @@ public:
             }
         });
 
-        for (auto &updated_value : updated_values) {
+        for (auto& updated_value : updated_values) {
             _observer_map.upsert(updated_value.first, updated_value.second);
         }
     }
@@ -324,7 +326,7 @@ private:
 
         void remove_if(const std::function<bool(T&)>& f) {
             _mutex.lock();
-			// TODO: Confirm this is correct handling of the nodiscard / intention
+            // TODO: Confirm this is correct handling of the nodiscard / intention
             static_cast<void>(std::remove_if(_queue.begin(), _queue.end(), f));
             _mutex.unlock();
         }
@@ -356,7 +358,7 @@ private:
             _mutex.unlock();
         }
 
-        T upsert_wrap(U& e, std::function<T(T)> f) {
+        T upsert_wrap(U const& e, std::function<T(T)> f) {
             _mutex.lock();
             // C99, 6.2.5p9 -- guarantees that this will wrap to 0 once we reach max value
             T position = f(_map.crbegin()->first);
@@ -469,7 +471,11 @@ private:
 
         //Benchmarks[bmParseMacroParameter];
 
-        Query() = default;
+        Query() {
+            benchmark = 0L;
+            last = 0L;
+        }
+
         Query(const std::string& query) : query(query), benchmark(0), last(0) {}
 
         // let's do some copy and swap for a bit of easy optimization
@@ -541,6 +547,7 @@ private:
     unsigned int _evasive;
     unsigned int _expired;
     unsigned __int64 _last_group_check;
+    PMACROBLOCK _last_macro_check;
 
     // explicitly prevent copy/move operations.
     Node(const Node&) = delete;
@@ -671,6 +678,12 @@ public:
     }
     unsigned __int64 last_group_check() { return _last_group_check; }
 
+    PMACROBLOCK last_macro_check(const PMACROBLOCK& last_macro_check) {
+        _last_macro_check = last_macro_check;
+        return _last_macro_check;
+    }
+    PMACROBLOCK last_macro_check() { return _last_macro_check; }
+
     void save_channels();
 
     void clear_saved_channels();
@@ -692,16 +705,16 @@ public:
 #pragma region CommandDefs
 
 namespace MQ2DanNet {
-COMMAND(Echo, const std::string& message);
+COMMAND(Echo, const std::string& message)
 
-COMMAND(Execute, const std::string& command);
+COMMAND(Execute, const std::string& command)
 
 // NOTE: Query is asynchronous
-COMMAND(Query, const std::string& request);
+COMMAND(Query, const std::string& request)
 
-COMMAND(Observe, const std::string& query, const std::string& output);
+COMMAND(Observe, const std::string& query, const std::string& output)
 
-COMMAND(Update, const std::string& result);
+COMMAND(Update, const std::string& result)
 }
 
 #pragma endregion
@@ -1267,7 +1280,7 @@ void Node::node_actor(zsock_t* pipe, void* args) {
                     node->_leave_callbacks.remove_if([&name, &group](std::function<bool(const std::string&, const std::string&)> f) -> bool {
                         return f(name, group);
                     });
-                    node->_peer_groups.erase_if(group, [&name, &node](std::set<std::string>& group) -> bool {
+                    node->_peer_groups.erase_if(group, [&name](std::set<std::string>& group) -> bool {
                         group.erase(name);
                         return group.empty();
                     });
@@ -1437,6 +1450,19 @@ MQ2DANNET_NODE_API void MQ2DanNet::Node::forget_all(const std::string& name) {
     }
 }
 
+MQ2DANNET_NODE_API void MQ2DanNet::Node::forget_if(bool (*predicate)(const Observation& observation)) {
+    std::list<std::string> to_drop; // list of group names to drop
+    _observed_data.foreach ([this, &predicate, &to_drop](std::pair<std::string, Observation> pair) -> void {
+        if (predicate(pair.second)) {
+            to_drop.push_back(pair.first);
+        }
+    });
+
+    for (auto drop : to_drop) {
+        forget(drop);
+    }
+}
+
 MQ2DANNET_NODE_API void MQ2DanNet::Node::update(const std::string& group, const std::string& data, const std::string& output) {
     _observed_data.upsert(group, Observation(output, data, MQGetTickCount64()));
 }
@@ -1500,8 +1526,8 @@ MQ2DANNET_NODE_API std::set<std::string> MQ2DanNet::Node::observers(const std::s
 }
 
 // stub these for now, nothing to do here since memory is managed elsewhere (and all registered commands will go away)
-Node::Node() {}
-Node::~Node() {}
+Node::Node() = default;
+Node::~Node() = default;
 
 Node::Observation MQ2DanNet::Node::query(const std::string& output, const std::string& query) {
     std::string final_query = trim_query(query);
@@ -2553,6 +2579,16 @@ bool dataDanNet(const char* Index, MQTypeVar& Dest) {
     return true;
 }
 
+bool DoesVarExist(const Node::Observation& observation) {
+    std::string output = observation.output;
+    if (output.empty())
+        return false;
+
+    CHAR szOutput[MAX_STRING] = { 0 };
+    strcpy_s(szOutput, output.c_str());
+    return FindMQ2DataVariable(szOutput) == 0;
+}
+
 std::string unescape_string(const std::string& input) {
     char szOut[MAX_STRING] = { 0 };
     for (size_t old_pos = 0, new_pos = 0; old_pos < input.length(); ++old_pos, szOut[++new_pos] = 0) {
@@ -2578,11 +2614,25 @@ std::string unescape_string(const std::string& input) {
 }
 
 // The name must be send as server_name
-extern "C" MQ2DANNET_NODE_API bool peer_connected(const std::string& name)
-{
-	std::string lower_name = Node::init_string(name.c_str());
-	auto peers = Node::get().get_peers();
-	return std::find(peers.begin(), peers.end(), lower_name) != peers.end();
+extern "C" MQ2DANNET_NODE_API bool peer_connected(const std::string& name) {
+    std::string lower_name = Node::init_string(name.c_str());
+    auto peers = Node::get().get_peers();
+    return std::find(peers.begin(), peers.end(), lower_name) != peers.end();
+}
+
+void show_dnet_commands() {
+    WriteChatf("           \ayinterface [<iface_name>]\ax -- force interface to iface_name");
+    WriteChatf("           \aydebug [on|off]\ax -- turn debug on or off");
+    WriteChatf("           \aylocalecho [on|off]\ax -- turn localecho on or off");
+    WriteChatf("           \aycommandecho [on|off]\ax -- turn commandecho on or off");
+    WriteChatf("           \ayfullnames [on|off]\ax -- turn fullnames on or off");
+    WriteChatf("           \ayfrontdelim [on|off]\ax -- turn front delimiters on or off");
+    WriteChatf("           \aytimeout [new_timeout]\ax -- set the /dquery timeout");
+    WriteChatf("           \ayobservedelay [new_delay]\ax -- set the delay between observe sends in ms");
+    WriteChatf("           \ayevasive [new_evasive]\ax -- set the evasive timeout in ms");
+    WriteChatf("           \ayexpired [new_expired]\ax -- set the expired timeout in ms");
+    WriteChatf("           \aykeepalive [new_keepalive]\ax -- set the keepalive time for non-responding peers in ms");
+    WriteChatf("           \ayinfo\ax -- output group/peer information");
 }
 
 void show_dnet_commands() {
@@ -2704,7 +2754,7 @@ PLUGIN_API VOID DJoinCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             std::set<std::string> saved_groups = ParseArray(ReadVar("General", "Groups"));
             saved_groups.emplace(group);
             SetVar("General", "Groups", CreateArray(saved_groups));
-        } else if (szGroup[0] && szGroup[0] != '\0') {
+        } else if (szGroup[0]) {
             WriteChatColor("Syntax: /djoin <group> [all|save] -- join named group on peer network", USERCOLOR_DEFAULT);
         }
     }
@@ -2988,6 +3038,12 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             return;
         }
 
+        // also need to check here in case we set vars in a new macro before a pulse
+        if (Node::get().last_macro_check() != gMacroBlock) {
+            Node::get().last_macro_check(gMacroBlock);
+            Node::get().forget_if(DoesVarExist);
+        }
+
         if (!Node::get().can_read(name, query))
             Node::get().whisper<Observe>(name, query, output);
     }
@@ -3234,7 +3290,7 @@ PLUGIN_API VOID OnCleanUI() {
 
 // This is called every time MQ pulses
 PLUGIN_API VOID OnPulse() {
-	if (GetGameState() == GAMESTATE_INGAME) {
+    if (GetGameState() == GAMESTATE_INGAME) {
         Node::get().recv();
 
         if (Node::get().last_group_check() + 1000 < MQGetTickCount64()) {
@@ -3270,7 +3326,9 @@ PLUGIN_API VOID OnPulse() {
             check_and_join("group_", [](std::string& name) {
                 const PCHARINFO pChar = GetCharInfo();
                 if (pChar && pChar->pGroupInfo && pChar->pGroupInfo->pLeader) {
-                    name = std::string(pChar->pGroupInfo->pLeader->Name);
+                    char leader_name_cstr[MAX_STRING] = { 0 };
+                    GetCXStr(pChar->pGroupInfo->pLeader->pName, leader_name_cstr, sizeof(leader_name_cstr));
+                    name = std::string(leader_name_cstr);
                     return true;
                 }
 
@@ -3299,6 +3357,14 @@ PLUGIN_API VOID OnPulse() {
             for (const auto& group : groups) {
                 Node::get().leave(group);
             }
+        }
+
+        if (Node::get().last_macro_check() != gMacroBlock) {
+            Node::get().last_macro_check(gMacroBlock);
+
+            // if we have transitioned into not a macro then we need to loop through all
+            // our observer variables and leave any of the groups that rely on macro variables.
+            Node::get().forget_if(DoesVarExist);
         }
 
         Node::get().do_next();
