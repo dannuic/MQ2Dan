@@ -547,7 +547,7 @@ private:
     unsigned int _evasive;
     unsigned int _expired;
     unsigned __int64 _last_group_check;
-    PMACROBLOCK _last_macro_check;
+    MQMacroBlock* _last_macro_check;
 
     // explicitly prevent copy/move operations.
     Node(const Node&) = delete;
@@ -678,11 +678,11 @@ public:
     }
     unsigned __int64 last_group_check() { return _last_group_check; }
 
-    PMACROBLOCK last_macro_check(const PMACROBLOCK& last_macro_check) {
+    MQMacroBlock* last_macro_check(MQMacroBlock* last_macro_check) {
         _last_macro_check = last_macro_check;
         return _last_macro_check;
     }
-    PMACROBLOCK last_macro_check() { return _last_macro_check; }
+    MQMacroBlock* last_macro_check() { return _last_macro_check; }
 
     void save_channels();
 
@@ -1917,7 +1917,7 @@ std::stringstream MQ2DanNet::Observe::pack(const std::string& recipient, const s
     }
 
     // this is the callback to actually start observing. We can't just do it because the observed will come back with the right group
-    auto f = [final_query, output = move(output)](std::stringstream&& args) -> bool {
+    auto f = [final_query, &output](std::stringstream&& args) -> bool {
         Archive<std::stringstream> ar(args);
         std::string from;
         std::string group;
@@ -2036,7 +2036,7 @@ std::stringstream MQ2DanNet::Update::pack(const std::string& recipient, const st
 
 #pragma region MainPlugin
 
-std::string GetDefault(const std::string& val) {
+std::string GetDefault(std::string_view val) {
     if (val == "Debugging")
         return std::string("off");
     else if (val == "Local Echo")
@@ -2081,7 +2081,7 @@ std::string ReadVar(const std::string& key) {
 }
 
 VOID SetVar(const std::string& section, const std::string& key, const std::string& val) {
-    WritePrivateProfileString(section.c_str(), key.c_str(), val == GetDefault(val) ? NULL : val.c_str(), INIFileName);
+    ::WritePrivateProfileStringA(section.c_str(), key.c_str(), val == GetDefault(val) ? NULL : val.c_str(), INIFileName);
 }
 
 bool ParseBool(const std::string& section, const std::string& key, const std::string& input, bool current) {
@@ -2635,21 +2635,6 @@ void show_dnet_commands() {
     WriteChatf("           \ayinfo\ax -- output group/peer information");
 }
 
-void show_dnet_commands() {
-    WriteChatf("           \ayinterface [<iface_name>]\ax -- force interface to iface_name");
-    WriteChatf("           \aydebug [on|off]\ax -- turn debug on or off");
-    WriteChatf("           \aylocalecho [on|off]\ax -- turn localecho on or off");
-    WriteChatf("           \aycommandecho [on|off]\ax -- turn commandecho on or off");
-    WriteChatf("           \ayfullnames [on|off]\ax -- turn fullnames on or off");
-    WriteChatf("           \ayfrontdelim [on|off]\ax -- turn front delimiters on or off");
-    WriteChatf("           \aytimeout [new_timeout]\ax -- set the /dquery timeout");
-    WriteChatf("           \ayobservedelay [new_delay]\ax -- set the delay between observe sends in ms");
-    WriteChatf("           \ayevasive [new_evasive]\ax -- set the evasive timeout in ms");
-    WriteChatf("           \ayexpired [new_expired]\ax -- set the expired timeout in ms");
-    WriteChatf("           \aykeepalive [new_keepalive]\ax -- set the keepalive time for non-responding peers in ms");
-    WriteChatf("           \ayinfo\ax -- output group/peer information");
-}
-
 PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     CHAR szParam[MAX_STRING] = { 0 };
     GetArg(szParam, szLine, 1);
@@ -3039,8 +3024,8 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         }
 
         // also need to check here in case we set vars in a new macro before a pulse
-        if (Node::get().last_macro_check() != gMacroBlock) {
-            Node::get().last_macro_check(gMacroBlock);
+        if (Node::get().last_macro_check() != gMacroBlock.get()) {
+            Node::get().last_macro_check(gMacroBlock.get());
             Node::get().forget_if(DoesVarExist);
         }
 
@@ -3326,9 +3311,7 @@ PLUGIN_API VOID OnPulse() {
             check_and_join("group_", [](std::string& name) {
                 const PCHARINFO pChar = GetCharInfo();
                 if (pChar && pChar->pGroupInfo && pChar->pGroupInfo->pLeader) {
-                    char leader_name_cstr[MAX_STRING] = { 0 };
-                    GetCXStr(pChar->pGroupInfo->pLeader->pName, leader_name_cstr, sizeof(leader_name_cstr));
-                    name = std::string(leader_name_cstr);
+                    name = std::string(pChar->pGroupInfo->pLeader->Name);
                     return true;
                 }
 
@@ -3359,8 +3342,8 @@ PLUGIN_API VOID OnPulse() {
             }
         }
 
-        if (Node::get().last_macro_check() != gMacroBlock) {
-            Node::get().last_macro_check(gMacroBlock);
+        if (Node::get().last_macro_check() != gMacroBlock.get()) {
+            Node::get().last_macro_check(gMacroBlock.get());
 
             // if we have transitioned into not a macro then we need to loop through all
             // our observer variables and leave any of the groups that rely on macro variables.
