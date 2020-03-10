@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7515 -- added a mutex to allow actor destruction to completely happen
  * dannuic: version 0.7514 -- fixed an issue where variables that went out of scope wouldn't remove observers remotely
  * plure:   version 0.7513 -- added the ability for other plugin's to check if someone is connected to mq2dannet
  * dannuic: version 0.7512 -- added keepalive to main actor thread with configuration option for frequency, and added options for expire and evasive timeouts
@@ -66,7 +67,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7514);
+PLUGIN_VERSION(0.7515);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -456,6 +457,9 @@ private:
     zyre_t* _node;
     zactor_t* _actor;
     zpoller_t* _poller;
+
+    // need a mutex for init/shutdown or we get race conditions
+    std::mutex _actor_mutex;
 
     // command containers
     locked_map<std::string, std::function<bool(std::stringstream&& args)>> _command_map; // callback name, callback
@@ -956,9 +960,13 @@ void Node::node_actor(zsock_t* pipe, void* args) {
     if (!node)
         return;
 
+    node->_actor_mutex.lock();
+
     node->_node = zyre_new(node->_node_name.c_str());
-    if (!node->_node)
+    if (!node->_node) {
+        node->_actor_mutex.unlock();
         throw new std::invalid_argument("Could not create node");
+    }
 
     CHAR szBuf[MAX_STRING] = { 0 };
     GetPrivateProfileString("General", "Interface", NULL, szBuf, MAX_STRING, INIFileName);
@@ -994,7 +1002,9 @@ void Node::node_actor(zsock_t* pipe, void* args) {
 
     bool terminated = false;
     while (!terminated) {
+        node->_actor_mutex.unlock();
         void* which = zpoller_wait(poller, keepalive);
+        node->_actor_mutex.lock();
 
         bool did_expire = zpoller_expired(poller);
         bool did_terminate = zpoller_terminated(poller);
@@ -1011,7 +1021,7 @@ void Node::node_actor(zsock_t* pipe, void* args) {
             //DebugSpewAlways("Got message from caller");
             zmsg_t* msg = zmsg_recv(which);
             if (!msg)
-                break; // Interrupted
+                continue; // Interrupted
 
             // strings index commands because zeromq has the infrastructure and it's not time-critical
             // otherwise, we'd have to deal with byte streams, which is totally unnecessary
@@ -1220,7 +1230,7 @@ void Node::node_actor(zsock_t* pipe, void* args) {
             //DebugSpewAlways("Got a message over the socket");
             zyre_event_t* z_event = zyre_event_new(node->_node);
             if (!z_event)
-                break;
+                continue;
 
             const char* szEventType = zyre_event_type(z_event);
             std::string event_type(szEventType ? szEventType : ""); // don't use init_string() because we don't want to make lower
@@ -1358,6 +1368,8 @@ void Node::node_actor(zsock_t* pipe, void* args) {
     zclock_sleep(100);
     zyre_destroy(&node->_node);
     zpoller_destroy(&node->_poller);
+
+    node->_actor_mutex.unlock();
     zclock_sleep(100);
 }
 
@@ -1643,11 +1655,13 @@ void Node::enter() {
     _actor = zactor_new(Node::node_actor, this);
 
     if (_actor) {
+        _actor_mutex.lock();
         if (_poller) {
             zpoller_destroy(&_poller);
         }
 
         _poller = zpoller_new(_actor, (void*)NULL);
+        _actor_mutex.unlock();
         if (!_poller)
             throw new std::invalid_argument("Could not create poller");
     }
@@ -1659,6 +1673,9 @@ void Node::exit() {
         zactor_destroy(&_actor);
     } else if (_node || _poller) {
         // in general destroying the zactor will do this, but just in case it's dangling, let's be safe
+		// it's possible that the actor is in the process of destruction, so let's make sure the lock
+		// has been released before attempting to destroy the constituents
+        _actor_mutex.lock();
         if (_node) {
             DebugSpewAlways("WARNING: had a node without an actor in %s", _node_name.c_str());
             zyre_destroy(&_node);
@@ -1668,23 +1685,30 @@ void Node::exit() {
             DebugSpewAlways("WARNING: had a poller without an actor in %s", _node_name.c_str());
             zpoller_destroy(&_poller);
         }
+        _actor_mutex.unlock();
     }
 
     _node_name = "";
 }
 
 void MQ2DanNet::Node::startup() {
+    _actor_mutex.lock();
     // ensure that startup has happened so that we can put our atexit at the proper place in the exit function queue
     zsys_init();
     //atexit([]() -> void {});
+    _actor_mutex.unlock();
 }
 
 void MQ2DanNet::Node::set_timeout(int timeout) {
+    _actor_mutex.lock();
     zmq_setsockopt(_actor, ZMQ_RCVTIMEO, "", timeout);
+    _actor_mutex.unlock();
 }
 
 void MQ2DanNet::Node::shutdown() {
+    _actor_mutex.lock();
     zsys_shutdown();
+    _actor_mutex.unlock();
 }
 
 void MQ2DanNet::Node::recv() {
@@ -2640,7 +2664,7 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
     GetArg(szParam, szLine, 1);
 
     if (szParam[0]) {
-		if (ci_equals(szParam, "interface")) {
+        if (ci_equals(szParam, "interface")) {
             GetArg(szParam, szLine, 2);
             if (szParam[0] && strlen(szParam) > 0) {
                 if (!strcmp(szParam, "clear")) {
@@ -2711,11 +2735,11 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             WriteChatf("\ax\atMQ2DanNet\ax :: \ayv%1.4f\ax", MQ2Version);
         } else {
             WriteChatf("\ax\atMQ2DanNet:\ax unrecognized /dnet argument \ar%s\ax. Valid arguments are: ", szParam);
-			show_dnet_commands();
+            show_dnet_commands();
         }
     } else {
         WriteChatf("\ax\atMQ2DanNet:\ax no /dnet argument specified. Valid arguments are: ");
-		show_dnet_commands();
+        show_dnet_commands();
     }
 }
 
