@@ -1,6 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
- * dannuic: version 0.7515 -- added a mutex to allow actor destruction to completely happen
+ * dannuic: version 0.7515 -- removed the signal sending to allow for thread shutdown during zoning
  * dannuic: version 0.7514 -- fixed an issue where variables that went out of scope wouldn't remove observers remotely
  * plure:   version 0.7513 -- added the ability for other plugin's to check if someone is connected to mq2dannet
  * dannuic: version 0.7512 -- added keepalive to main actor thread with configuration option for frequency, and added options for expire and evasive timeouts
@@ -457,9 +457,6 @@ private:
     zyre_t* _node;
     zactor_t* _actor;
     zpoller_t* _poller;
-
-    // need a mutex for init/shutdown or we get race conditions
-    std::mutex _actor_mutex;
 
     // command containers
     locked_map<std::string, std::function<bool(std::stringstream&& args)>> _command_map; // callback name, callback
@@ -960,11 +957,8 @@ void Node::node_actor(zsock_t* pipe, void* args) {
     if (!node)
         return;
 
-    node->_actor_mutex.lock();
-
     node->_node = zyre_new(node->_node_name.c_str());
     if (!node->_node) {
-        node->_actor_mutex.unlock();
         throw new std::invalid_argument("Could not create node");
     }
 
@@ -998,23 +992,15 @@ void Node::node_actor(zsock_t* pipe, void* args) {
     // TODO: This doesn't appear necessary, but experiment with it
     //zpoller_set_nonstop(poller, true);
 
-    node->_actor_mutex.unlock();
     DebugSpewAlways("Starting actor loop for %s : %s", node->_node_name.c_str(), zyre_uuid(node->_node));
 
     bool terminated = false;
     while (!terminated) {
         void* which = zpoller_wait(poller, keepalive);
 
-        bool did_expire = zpoller_expired(poller);
-        bool did_terminate = zpoller_terminated(poller);
-
-        if (did_expire) {
-            zsock_signal(pipe, 0);
-            int rc = zsock_wait(pipe);
-            if (rc != 0)
+        if (!which || !pipe || !node || !node->_node) {
+            if (!pipe || !zpoller_expired(poller) || zstr_send(pipe, "PING") == -1)
                 terminated = true;
-        } else if (!which || !pipe || !node || !node->_node || did_terminate) {
-            terminated = true;
         } else if (which == pipe) {
             // we've got a command from the caller here
             //DebugSpewAlways("Got message from caller");
@@ -1192,7 +1178,9 @@ void Node::node_actor(zsock_t* pipe, void* args) {
                 if (szKeepalive)
                     zstr_free(&szKeepalive);
             } else if (streq(command, "PING")) {
-                zsock_signal(pipe, 0);
+                zstr_send(pipe, "PONG");
+            } else if (streq(command, "PONG")) {
+				// TODO: we can potentially track keepalive responses, but for now let's just discard this
             } else {
                 zframe_t* body = zmsg_pop(msg);
                 char* name = zmsg_popstr(msg);
@@ -1349,7 +1337,6 @@ void Node::node_actor(zsock_t* pipe, void* args) {
         }
     }
 
-    node->_actor_mutex.lock();
     zpoller_destroy(&poller);
 
     zlist_t* own_groups = zyre_own_groups(node->_node);
@@ -1370,7 +1357,6 @@ void Node::node_actor(zsock_t* pipe, void* args) {
     zpoller_destroy(&node->_poller);
 
     zclock_sleep(100);
-    node->_actor_mutex.unlock();
 }
 
 std::string Node::init_string(const char* szStr) {
@@ -1655,13 +1641,11 @@ void Node::enter() {
     _actor = zactor_new(Node::node_actor, this);
 
     if (_actor) {
-        _actor_mutex.lock();
         if (_poller) {
             zpoller_destroy(&_poller);
         }
 
         _poller = zpoller_new(_actor, (void*)NULL);
-        _actor_mutex.unlock();
         if (!_poller)
             throw new std::invalid_argument("Could not create poller");
     }
@@ -1675,7 +1659,6 @@ void Node::exit() {
         // in general destroying the zactor will do this, but just in case it's dangling, let's be safe
 		// it's possible that the actor is in the process of destruction, so let's make sure the lock
 		// has been released before attempting to destroy the constituents
-        _actor_mutex.lock();
         if (_node) {
             DebugSpewAlways("WARNING: had a node without an actor in %s", _node_name.c_str());
             zyre_destroy(&_node);
@@ -1685,30 +1668,23 @@ void Node::exit() {
             DebugSpewAlways("WARNING: had a poller without an actor in %s", _node_name.c_str());
             zpoller_destroy(&_poller);
         }
-        _actor_mutex.unlock();
     }
 
     _node_name = "";
 }
 
 void MQ2DanNet::Node::startup() {
-    _actor_mutex.lock();
     // ensure that startup has happened so that we can put our atexit at the proper place in the exit function queue
     zsys_init();
     //atexit([]() -> void {});
-    _actor_mutex.unlock();
 }
 
 void MQ2DanNet::Node::set_timeout(int timeout) {
-    _actor_mutex.lock();
     zmq_setsockopt(_actor, ZMQ_RCVTIMEO, "", timeout);
-    _actor_mutex.unlock();
 }
 
 void MQ2DanNet::Node::shutdown() {
-    _actor_mutex.lock();
     zsys_shutdown();
-    _actor_mutex.unlock();
 }
 
 void MQ2DanNet::Node::recv() {
@@ -1717,13 +1693,17 @@ void MQ2DanNet::Node::recv() {
 
     void* which = zpoller_wait(_poller, 0);
     if (which) {
-        // we currently only expect signals here for a keepalive -- this can be expanded to a full heartbeat if necessary
+        // we currently only expect commands here for a keepalive -- this can be expanded to a full heartbeat if necessary
         zmsg_t* msg = zmsg_recv(which);
         if (msg) {
-            int rc = zmsg_signal(msg);
+            char* command = zmsg_popstr(msg);
+            if (command) {
+                if (streq(command, "PING"))
+                    zstr_send(_actor, "PONG");
+				// TODO: can potentially handle PONG here like in the actor thread, but for now let's discard it
+                zstr_free(&command);
+            }
             zmsg_destroy(&msg);
-            if (rc == 0)
-                zsock_signal(_actor, 0);
         }
     }
 }
