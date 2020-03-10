@@ -998,13 +998,12 @@ void Node::node_actor(zsock_t* pipe, void* args) {
     // TODO: This doesn't appear necessary, but experiment with it
     //zpoller_set_nonstop(poller, true);
 
+    node->_actor_mutex.unlock();
     DebugSpewAlways("Starting actor loop for %s : %s", node->_node_name.c_str(), zyre_uuid(node->_node));
 
     bool terminated = false;
     while (!terminated) {
-        node->_actor_mutex.unlock();
         void* which = zpoller_wait(poller, keepalive);
-        node->_actor_mutex.lock();
 
         bool did_expire = zpoller_expired(poller);
         bool did_terminate = zpoller_terminated(poller);
@@ -1350,6 +1349,7 @@ void Node::node_actor(zsock_t* pipe, void* args) {
         }
     }
 
+    node->_actor_mutex.lock();
     zpoller_destroy(&poller);
 
     zlist_t* own_groups = zyre_own_groups(node->_node);
@@ -1369,8 +1369,8 @@ void Node::node_actor(zsock_t* pipe, void* args) {
     zyre_destroy(&node->_node);
     zpoller_destroy(&node->_poller);
 
-    node->_actor_mutex.unlock();
     zclock_sleep(100);
+    node->_actor_mutex.unlock();
 }
 
 std::string Node::init_string(const char* szStr) {
