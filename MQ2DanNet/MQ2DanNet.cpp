@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7516 -- fixed various iterator and reference related crashes
  * dannuic: version 0.7515 -- removed the signal sending to allow for thread shutdown during zoning
  * dannuic: version 0.7514 -- fixed an issue where variables that went out of scope wouldn't remove observers remotely
  * plure:   version 0.7513 -- added the ability for other plugin's to check if someone is connected to mq2dannet
@@ -67,7 +68,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7515);
+PLUGIN_VERSION(0.7516);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -288,7 +289,7 @@ private:
 
         T get_next(std::function<T(T)> f) {
             _mutex.lock();
-            T r = f(*(_set.crbegin()));
+            T r = _set.empty() ? T() : f(*(_set.crbegin()));
             _mutex.unlock();
             return r;
         }
@@ -362,7 +363,7 @@ private:
         T upsert_wrap(U const& e, std::function<T(T)> f) {
             _mutex.lock();
             // C99, 6.2.5p9 -- guarantees that this will wrap to 0 once we reach max value
-            T position = f(_map.crbegin()->first);
+            T position = _map.empty() ? T() : f(_map.crbegin()->first);
 
             _map[position] = e;
             _mutex.unlock();
@@ -428,7 +429,7 @@ private:
             _mutex.lock();
             for (auto it = _map.begin(); it != _map.end();) {
                 if (f(*it))
-                    _map.erase(it);
+                    it = _map.erase(it);
                 else
                     ++it;
             }
