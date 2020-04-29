@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7516 -- fixed various iterator and reference related crashes
  * dannuic: version 0.7515 -- removed the signal sending to allow for thread shutdown during zoning
  * dannuic: version 0.7514 -- fixed an issue where variables that went out of scope wouldn't remove observers remotely
  * plure:   version 0.7513 -- added the ability for other plugin's to check if someone is connected to mq2dannet
@@ -67,7 +68,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7515);
+PLUGIN_VERSION(0.7516);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
