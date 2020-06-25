@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7517 -- fixed concurrency issues by only running setup/teardown on the main thread
  * dannuic: version 0.7516 -- fixed various iterator and reference related crashes
  * dannuic: version 0.7515 -- removed the signal sending to allow for thread shutdown during zoning
  * dannuic: version 0.7514 -- fixed an issue where variables that went out of scope wouldn't remove observers remotely
@@ -68,7 +69,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7516);
+PLUGIN_VERSION(0.7517);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -1631,61 +1632,81 @@ void Node::enter() {
     if (!pChar)
         return;
 
-    if (_actor) {
-        DebugSpewAlways("Already had actor for %s", _node_name.c_str());
-        zactor_destroy(&_actor);
-    }
-
-    _node_name = get_full_name(pChar->Name);
-
-    DebugSpewAlways("Spinning up actor for %s", _node_name.c_str());
-    _actor = zactor_new(Node::node_actor, this);
-
-    if (_actor) {
-        if (_poller) {
-            zpoller_destroy(&_poller);
+	if (IsMainThread()) {
+        if (_actor) {
+            DebugSpewAlways("Already had actor for %s", _node_name.c_str());
+            zactor_destroy(&_actor);
         }
 
-        _poller = zpoller_new(_actor, (void*)NULL);
-        if (!_poller)
-            throw new std::invalid_argument("Could not create poller");
-    }
+        _node_name = get_full_name(pChar->Name);
+
+        DebugSpewAlways("Spinning up actor for %s", _node_name.c_str());
+        _actor = zactor_new(Node::node_actor, this);
+
+        if (_actor) {
+            if (_poller) {
+                zpoller_destroy(&_poller);
+            }
+
+            _poller = zpoller_new(_actor, (void*)NULL);
+            if (!_poller)
+                throw new std::invalid_argument("Could not create poller");
+        }
+    } else {
+        PostToMainThread([this]() { this->enter(); });
+	}
 }
 
 void Node::exit() {
-    if (_actor) {
-        DebugSpewAlways("Destroying actor for %s", _node_name.c_str());
-        zactor_destroy(&_actor);
-    } else if (_node || _poller) {
-        // in general destroying the zactor will do this, but just in case it's dangling, let's be safe
-        // it's possible that the actor is in the process of destruction, so let's make sure the lock
-        // has been released before attempting to destroy the constituents
-        if (_node) {
-            DebugSpewAlways("WARNING: had a node without an actor in %s", _node_name.c_str());
-            zyre_destroy(&_node);
+    if (IsMainThread()) {
+        if (_actor) {
+            DebugSpewAlways("Destroying actor for %s", _node_name.c_str());
+            zactor_destroy(&_actor);
+        } else if (_node || _poller) {
+            // in general destroying the zactor will do this, but just in case it's dangling, let's be safe
+            // it's possible that the actor is in the process of destruction, so let's make sure the lock
+            // has been released before attempting to destroy the constituents
+            if (_node) {
+                DebugSpewAlways("WARNING: had a node without an actor in %s", _node_name.c_str());
+                zyre_destroy(&_node);
+            }
+
+            if (_poller) {
+                DebugSpewAlways("WARNING: had a poller without an actor in %s", _node_name.c_str());
+                zpoller_destroy(&_poller);
+            }
         }
 
-        if (_poller) {
-            DebugSpewAlways("WARNING: had a poller without an actor in %s", _node_name.c_str());
-            zpoller_destroy(&_poller);
-        }
-    }
-
-    _node_name = "";
+        _node_name = "";
+	} else {
+        PostToMainThread([this]() { this->exit(); });
+	}
 }
 
 void MQ2DanNet::Node::startup() {
-    // ensure that startup has happened so that we can put our atexit at the proper place in the exit function queue
-    zsys_init();
-    //atexit([]() -> void {});
+    if (IsMainThread()) {
+        // ensure that startup has happened so that we can put our atexit at the proper place in the exit function queue
+        zsys_init();
+        //atexit([]() -> void {});
+    } else {
+        PostToMainThread([this]() { this->startup(); });
+	}
 }
 
 void MQ2DanNet::Node::set_timeout(int timeout) {
-    zmq_setsockopt(_actor, ZMQ_RCVTIMEO, "", timeout);
+    if (IsMainThread()) {
+        zmq_setsockopt(_actor, ZMQ_RCVTIMEO, "", timeout);
+    } else {
+        PostToMainThread([this, timeout]() { this->set_timeout(timeout); });
+	}
 }
 
 void MQ2DanNet::Node::shutdown() {
-    zsys_shutdown();
+    if (IsMainThread()) {
+        zsys_shutdown();
+    } else {
+        PostToMainThread([this]() { this->shutdown(); });
+	}
 }
 
 void MQ2DanNet::Node::recv() {
