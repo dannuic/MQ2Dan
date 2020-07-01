@@ -1,0 +1,68 @@
+From d22836e93285725205ceb6cbac42a293ebc7d925 Mon Sep 17 00:00:00 2001
+From: Dustin Niehoff <dannuic@gmail.com>
+Date: Tue, 30 Jun 2020 09:34:22 -0600
+Subject: [PATCH] Updated version for zyre
+
+---
+ ports/czmq/portfile.cmake   | 4 ++--
+ ports/zeromq/portfile.cmake | 6 +++---
+ ports/zyre/portfile.cmake   | 4 ++--
+ 3 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/ports/czmq/portfile.cmake b/ports/czmq/portfile.cmake
+index a30449329..73ca938c0 100644
+--- a/ports/czmq/portfile.cmake
++++ b/ports/czmq/portfile.cmake
+@@ -3,8 +3,8 @@ include(vcpkg_common_functions)
+ vcpkg_from_github(
+     OUT_SOURCE_PATH SOURCE_PATH
+     REPO zeromq/czmq
+-    REF 7e29cf95305551daad197e32423d9cff5f9b6893
+-    SHA512 7d79494c904f5276c9d1e4a193a63882dc622a6db8998b9719de4aec8b223b3a8b3c92ea02be81f39afc12c1a883b310fd3662ea27ed736b0b9c7092b4843a18
++    REF 614572bf207dc89b35f2ef19c698b5d51861dd0b
++    SHA512 9a71c3bb9a5d472f72ac9923f27fed9fc461eb569c8aa26166f4d19a34de43f4e3577de023f18fd4db207f0b8f09b88a267eeb02c25410bde873d1d74f4b66b7
+     HEAD_REF master
+     PATCHES
+         fix-dependencies.patch
+diff --git a/ports/zeromq/portfile.cmake b/ports/zeromq/portfile.cmake
+index 4df376a1b..4ddf9d494 100644
+--- a/ports/zeromq/portfile.cmake
++++ b/ports/zeromq/portfile.cmake
+@@ -3,8 +3,8 @@ include(vcpkg_common_functions)
+ vcpkg_from_github(
+     OUT_SOURCE_PATH SOURCE_PATH
+     REPO zeromq/libzmq
+-    REF 8d34332ff2301607df0fc9971a2fbe903c0feb7c
+-    SHA512 8b3a9b6c4e5236353672b6deb64c94ac79deb116962405f01fe36e2fd8ddc48ec65d88ffc06746ce2e13c93eaeb04e4ba73de8f9d6f2a57a73111765d5ba8ad7
++    REF 4dd504abebf3eb944d0554c36d490fb2bb742e4f
++    SHA512 cf0d81692744a66b1b318fc86d617e0c4dbd74801b34a9b526f1a475dda1e4b1b303ffcdb35f698e5c2bc796de358f8608c82dbc8d5ba8128ec01e1fd04537a5
+     HEAD_REF master
+ )
+ 
+@@ -24,7 +24,7 @@ vcpkg_configure_cmake(
+     PREFER_NINJA
+     OPTIONS
+         -DZMQ_BUILD_TESTS=OFF
+-        -DPOLLER=select
++        -DPOLLER=epoll
+         -DBUILD_STATIC=${BUILD_STATIC}
+         -DBUILD_SHARED=${BUILD_SHARED}
+         -DWITH_PERF_TOOL=OFF
+diff --git a/ports/zyre/portfile.cmake b/ports/zyre/portfile.cmake
+index de44b4b03..0c50e96f6 100644
+--- a/ports/zyre/portfile.cmake
++++ b/ports/zyre/portfile.cmake
+@@ -3,8 +3,8 @@ include(vcpkg_common_functions)
+ vcpkg_from_github(
+     OUT_SOURCE_PATH SOURCE_PATH
+     REPO zeromq/zyre
+-    REF 2648b7eb806a2494d6eb4177f0941232d83c5294
+-    SHA512 8940e82ccdc427734711d63dc01c81fe86c4ca6b7e97a69df979f4d48a4711df1ccaee6a3b6aa394f9ef91d719cb95851c4eb87dfa9ed6426e2577b95e0fb464
++    REF 1b5962436c3e32705cb7f07cf1b83ff49770abb7
++    SHA512 d460a29ec72b38e98187ed45422da43433b5fd337a295f3ca9df3d350f0d8bf9de85cfcb84fd54fc6818fe778ee0ba12e84aee62a015b6e9d0396a534cb1b9aa
+     HEAD_REF master
+ )
+ 
+-- 
+2.18.0.windows.1
+
