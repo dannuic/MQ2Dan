@@ -2184,7 +2184,7 @@ public:
         TypeMember(Received);
     }
 
-    bool GetMember(MQVarPtr VarPtr, char* Member, char* Index, MQTypeVar& Dest) {
+    virtual bool GetMember(MQVarPtr VarPtr, const char* Member, char* Index, MQTypeVar& Dest) override {
         MQTypeMember* pMember = MQ2DanObservationType::FindMember(Member);
         if (!pMember)
             return false;
@@ -2231,7 +2231,7 @@ public:
         return false;
     }
 
-    bool FromString(MQVarPtr& VarPtr, char* Source) { return false; }
+    virtual bool FromString(MQVarPtr& VarPtr, const char* Source) override { return false; }
 };
 
 class MQ2DanNetType* pDanNetType = nullptr;
@@ -2312,7 +2312,7 @@ public:
         TypeMember(QueryReceived);
     }
 
-    bool GetMember(MQVarPtr VarPtr, char* Member, char* Index, MQTypeVar& Dest) {
+    virtual bool GetMember(MQVarPtr VarPtr, const char* Member, char* Index, MQTypeVar& Dest) override {
         _buf[0] = '\0';
 
         std::string local_peer = _peer;
@@ -2587,7 +2587,7 @@ public:
     }
 
     bool FromData(MQVarPtr& VarPtr, MQTypeVar& Source) { return false; }
-    bool FromString(MQVarPtr& VarPtr, char* Source) { return false; }
+    virtual bool FromString(MQVarPtr& VarPtr, const char* Source) override { return false; }
 };
 
 bool dataDanNet(const char* Index, MQTypeVar& Dest) {
