@@ -51,8 +51,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,7517
- PRODUCTVERSION 0,7517
+ FILEVERSION 0,7518
+ PRODUCTVERSION 0,7518
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -73,12 +73,12 @@ BEGIN
 #else
             VALUE "FileDescription", "MQ2DanNet Release Version"
 #endif
-            VALUE "FileVersion", "0.7517"
+            VALUE "FileVersion", "0.7518"
             VALUE "InternalName", "MQ2DanNet.dll"
             VALUE "LegalCopyright", "Licensed under the MIT License"
             VALUE "OriginalFilename", "MQ2DanNet.dll"
             VALUE "ProductName", "MQ2DanNet"
-            VALUE "ProductVersion", "0.7517"
+            VALUE "ProductVersion", "0.7518"
         END
     END
     BLOCK "VarFileInfo"
