@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7518 -- removed shout elision to account for UDP dropped packets
  * dannuic: version 0.7516 -- fixed various iterator and reference related crashes
  * dannuic: version 0.7515 -- removed the signal sending to allow for thread shutdown during zoning
  * dannuic: version 0.7514 -- fixed an issue where variables that went out of scope wouldn't remove observers remotely
@@ -68,7 +69,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7516);
+PLUGIN_VERSION(0.7518);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -201,10 +202,7 @@ public:
                 std::string group = observer_group(observer.first);
                 std::string query_result = parse_query(observer.second.query);
 
-                if (!_query_map.contains(observer.second.query) || _query_map.get(observer.second.query) != query_result) {
-                    _query_map.upsert(observer.second.query, query_result);
-                    shout<T>(group, query_result, std::forward<Args>(args)...);
-                }
+                shout<T>(group, query_result, std::forward<Args>(args)...);
 
                 Query new_query(observer.second.query);
 
@@ -462,7 +460,6 @@ private:
     // command containers
     locked_map<std::string, std::function<bool(std::stringstream&& args)>> _command_map; // callback name, callback
     locked_queue<std::pair<std::string, std::stringstream>> _command_queue;              // pair callback name, callback
-    locked_map<std::string, std::string> _query_map;                                     // query, result
 
     locked_set<unsigned char> _response_keys; // ordered number of responses
 
