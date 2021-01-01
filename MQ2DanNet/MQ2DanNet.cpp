@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7519 -- fixed lock issues
  * dannuic: version 0.7518 -- removed query memoization to account for dropped UDP traffic
  * dannuic: version 0.7517 -- fixed concurrency issues by only running setup/teardown on the main thread
  * dannuic: version 0.7516 -- fixed various iterator and reference related crashes
@@ -70,7 +71,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7518);
+PLUGIN_VERSION(0.7519);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -236,20 +237,18 @@ private:
 
     public:
         void push_back(T& e) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             _vector.push_back(e);
-            _mutex.unlock();
         }
 
         void remove_if(std::function<bool(T)> f) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             for (auto it = _vector.begin(); it != _vector.end();) {
                 if (f(*it))
                     _vector.erase(it);
                 else
                     ++it;
             }
-            _mutex.unlock();
         }
     };
 
@@ -261,42 +260,36 @@ private:
 
     public:
         std::set<T> copy() {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             std::set<T> r;
             r.insert(_set.cbegin(), _set.cend());
-            _mutex.unlock();
             return r;
         }
 
         void clear() {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             _set.clear();
-            _mutex.unlock();
         }
 
         void emplace(T e) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             _set.emplace(e);
-            _mutex.unlock();
         }
 
         void erase(T e) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             _set.erase(e);
-            _mutex.unlock();
         }
 
         T get_next(std::function<T(T)> f) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             T r = _set.empty() ? T() : f(*(_set.crbegin()));
-            _mutex.unlock();
             return r;
         }
 
         void insert(T& e) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             _set.insert(e);
-            _mutex.unlock();
         }
     };
 
@@ -309,27 +302,24 @@ private:
     public:
         //emplace empty front pop
         void emplace(T& e) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             _queue.emplace_front(std::move(e));
-            _mutex.unlock();
         }
 
         T pop() {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             T r;
             if (!_queue.empty()) {
                 r = std::move(_queue.front());
                 _queue.pop_front(); // go ahead and pop it off, we've moved it
             }
-            _mutex.unlock();
             return r;
         }
 
         void remove_if(const std::function<bool(T&)>& f) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             // TODO: Confirm this is correct handling of the nodiscard / intention
             static_cast<void>(std::remove_if(_queue.begin(), _queue.end(), f));
-            _mutex.unlock();
         }
     };
 
@@ -341,105 +331,91 @@ private:
 
     public:
         std::size_t erase(const T& n) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             std::size_t r = _map.erase(n);
-            _mutex.unlock();
             return r;
         }
 
         void upsert(const T& n, const U& v) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             _map[n] = v;
-            _mutex.unlock();
         }
 
         void upsert(const T& n, std::function<void(U&)> f) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             f(_map[n]);
-            _mutex.unlock();
         }
 
         T upsert_wrap(U const& e, std::function<T(T)> f) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             // C99, 6.2.5p9 -- guarantees that this will wrap to 0 once we reach max value
             T position = _map.empty() ? T() : f(_map.crbegin()->first);
-
             _map[position] = e;
-            _mutex.unlock();
-
             return position;
         }
 
         U get(const T& n) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             U r; // it's default constructed
             auto r_it = _map.find(n);
             if (r_it != _map.end())
                 r = r_it->second;
-            _mutex.unlock();
             return r;
         }
 
         bool contains(const T& n) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             bool r = (_map.find(n) != _map.end());
-            _mutex.unlock();
             return r;
         }
 
         std::set<T, V> keys() {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             std::set<T, V> r;
             std::transform(_map.cbegin(), _map.cend(), std::inserter(r, r.begin()),
                 [](std::pair<T, U> key_val) -> T { return key_val.first; });
-            _mutex.unlock();
 
             return r;
         }
 
         std::list<U> values() {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             std::list<U> r;
             std::transform(_map.cbegin(), _map.cend(), std::inserter(r, r.begin()),
                 [](std::pair<T, U> key_val) -> U { return key_val.second; });
-            _mutex.unlock();
 
             return r;
         }
 
         void foreach (std::function<void(std::pair<T, U>)> f) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             for (auto it = _map.begin(); it != _map.end(); ++it) {
                 f(*it);
             }
-            _mutex.unlock();
         }
 
         void erase_if(const T& n, std::function<bool(U&)> f) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             auto it = _map.find(n);
             if (it != _map.end() && f(it->second)) {
                 _map.erase(it);
             }
-            _mutex.unlock();
         }
 
         void erase_if(std::function<bool(std::pair<T, U>)> f) {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             for (auto it = _map.begin(); it != _map.end();) {
                 if (f(*it))
                     it = _map.erase(it);
                 else
                     ++it;
             }
-            _mutex.unlock();
         }
 
         std::map<T, U, V> copy() {
-            _mutex.lock();
+            std::scoped_lock<std::mutex> lock(_mutex);
             std::map<T, U, V> r;
             r.insert(_map.cbegin(), _map.cend());
-            _mutex.unlock();
             return r;
         }
     };
