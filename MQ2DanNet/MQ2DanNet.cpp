@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7520 -- reverted change for query memoization and increased the default evasive timeout
  * dannuic: version 0.7519 -- fixed lock issues
  * dannuic: version 0.7518 -- removed shout elision to account for UDP dropped packets
  * dannuic: version 0.7516 -- fixed various iterator and reference related crashes
@@ -70,7 +71,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7518);
+PLUGIN_VERSION(0.7520);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -202,8 +203,10 @@ public:
             if (tick - observer.second.last >= std::max<unsigned __int64>(10 * observer.second.benchmark, observe_delay())) { // wait at least a second between updates
                 std::string group = observer_group(observer.first);
                 std::string query_result = parse_query(observer.second.query);
-
-                shout<T>(group, query_result, std::forward<Args>(args)...);
+				if (!_query_map.contains(observer.second.query) || _query_map.get(observer.second.query) != query_result) {
+                    _query_map.upsert(observer.second.query, query_result);
+                    shout<T>(group, query_result, std::forward<Args>(args)...);
+                }
 
                 Query new_query(observer.second.query);
 
@@ -223,6 +226,10 @@ public:
             _observer_map.upsert(updated_value.first, updated_value.second);
         }
     }
+
+	void clear_observer_cache() {
+        _query_map.clear();
+	}
 
 private:
     std::string _node_name;
@@ -411,6 +418,11 @@ private:
             }
         }
 
+		void clear() {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _map.clear();
+		}
+
         std::map<T, U, V> copy() {
             std::lock_guard<std::mutex> lock(_mutex);
             std::map<T, U, V> r;
@@ -436,6 +448,7 @@ private:
     // command containers
     locked_map<std::string, std::function<bool(std::stringstream&& args)>> _command_map; // callback name, callback
     locked_queue<std::pair<std::string, std::stringstream>> _command_queue;              // pair callback name, callback
+    locked_map<std::string, std::string> _query_map;                                     // query, result
 
     locked_set<unsigned char> _response_keys; // ordered number of responses
 
@@ -520,6 +533,7 @@ private:
     unsigned int _observe_delay;
     unsigned int _keepalive;
     unsigned int _evasive;
+    bool _evasive_refresh;
     unsigned int _expired;
     unsigned __int64 _last_group_check;
     PMACROBLOCK _last_macro_check;
@@ -639,6 +653,12 @@ public:
     }
     unsigned int evasive() { return _evasive; }
 
+	bool evasive_refresh(bool evasive_refresh) {
+        _evasive_refresh = evasive_refresh;
+        return _evasive_refresh;
+	}
+    bool evasive_refresh() { return _evasive_refresh; }
+
     unsigned int expired(unsigned int expired) {
         _expired = expired;
         if (_actor)
@@ -690,6 +710,8 @@ COMMAND(Query, const std::string& request)
 COMMAND(Observe, const std::string& query, const std::string& output)
 
 COMMAND(Update, const std::string& result)
+
+COMMAND(Reupdate)
 }
 
 #pragma endregion
@@ -1284,11 +1306,11 @@ void Node::node_actor(zsock_t* pipe, void* args) {
                         zmsg_send(&message, node->_actor);
                     }
                 }
-            } else if (event_type == "EVASIVE") {
+            } else if (event_type == "EVASIVE" || event_type == "SILENT") {
                 // not sure if anything needs to be done here?
                 // also, turns out this is done a lot so let's just mute it to reduce spam
                 //TODO: need to maintain a keepalive list so we can remove peers that have disconnected (how to force remove peers? it might be a command to the actor, look this up.)
-                //auto tick = MQGetTickCount64();
+                auto tick = MQGetTickCount64();
                 //zlist_t *peer_ids = zyre_peers(node->_node);
                 //if (peer_ids) {
                 //    const char *peer_id = reinterpret_cast<const char*>(zlist_first(peer_ids));
@@ -1302,7 +1324,8 @@ void Node::node_actor(zsock_t* pipe, void* args) {
                 //    zlist_destroy(&peer_ids);
                 //}
 
-                //DebugSpewAlways("%s is being evasive at %ull", name.c_str(), tick);
+                DebugSpewAlways("%s is being %s at %ull", name.c_str(), event_type.c_str(), tick);
+                if (node->_evasive_refresh) node->whisper<Reupdate>(name);
             } else {
                 DebugSpewAlways("MQ2DanNet: Got unhandled event type %s.", event_type.c_str());
             }
@@ -2010,6 +2033,29 @@ std::stringstream MQ2DanNet::Update::pack(const std::string& recipient, const st
     return send_stream;
 }
 
+const bool MQ2DanNet::Reupdate::callback(std::stringstream&& args) {
+    Archive<std::stringstream> received(args);
+    std::string from;
+    std::string group;
+
+    try {
+        received >> from >> group;
+        from = Node::get().get_name(from);
+        DebugSpewAlways("REUPDATE --> FROM: %s, GROUP: %s", from.c_str(), group.c_str());
+
+		Node::get().clear_observer_cache();
+
+        return false;
+    } catch (std::runtime_error&) {
+        DebugSpewAlways("MQ2DanNet::Reupdate -- Failed to deserialize.");
+        return false;
+    }
+}
+
+std::stringstream MQ2DanNet::Reupdate::pack(const std::string& recipient) {
+    return std::stringstream();
+}
+
 #pragma endregion
 
 #pragma region MainPlugin
@@ -2038,11 +2084,13 @@ std::string GetDefault(const std::string& val) {
     else if (val == "Observe Delay")
         return std::string("1000");
     else if (val == "Evasive")
-        return std::string("1000");
+        return std::string("5000");
     else if (val == "Expired")
         return std::string("30000");
     else if (val == "Keepalive")
         return std::string("30000");
+    else if (val == "Evasive Refresh")
+        return std::string("off");
 
     return std::string();
 }
@@ -2340,8 +2388,7 @@ public:
             } else if (Index && Index[0] != '\0') {
                 Dest.DWord = Node::get().get_group_peers(Node::init_string(Index)).size();
             } else {
-                _peers = Node::get().get_peers();
-                Dest.DWord = _peers.size();
+                Dest.DWord = Node::get().get_peers().size();
             }
             Dest.Type = pIntType;
             return true;
@@ -2608,6 +2655,7 @@ void show_dnet_commands() {
     WriteChatf("           \aytimeout [new_timeout]\ax -- set the /dquery timeout");
     WriteChatf("           \ayobservedelay [new_delay]\ax -- set the delay between observe sends in ms");
     WriteChatf("           \ayevasive [new_evasive]\ax -- set the evasive timeout in ms");
+    WriteChatf("           \ayevasiverefresh [on|off]\ax -- turn evasive refresh on or off");
     WriteChatf("           \ayexpired [new_expired]\ax -- set the expired timeout in ms");
     WriteChatf("           \aykeepalive [new_keepalive]\ax -- set the keepalive time for non-responding peers in ms");
     WriteChatf("           \ayinfo\ax -- output group/peer information");
@@ -2666,6 +2714,9 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             else
                 SetVar("General", "Evasive", GetDefault("Evasive"));
             Node::get().evasive(atoi(ReadVar("Evasive").c_str()));
+        } else if (!strcmp(szParam, "evasiverefresh")) {
+            GetArg(szParam, szLine, 2);
+            Node::get().evasive_refresh(ParseBool("General", "Evasive Refresh", szParam, Node::get().evasive_refresh()));
         } else if (!strcmp(szParam, "expired")) {
             GetArg(szParam, szLine, 2);
             if (szParam[0] && IsNumber(szParam))
@@ -3092,12 +3143,14 @@ PLUGIN_API VOID InitializePlugin() {
     Node::get().register_command<MQ2DanNet::Query>();
     Node::get().register_command<MQ2DanNet::Observe>();
     Node::get().register_command<MQ2DanNet::Update>();
+    Node::get().register_command<MQ2DanNet::Reupdate>();
 
     Node::get().debugging(ReadBool("General", "Debugging"));
     Node::get().local_echo(ReadBool("General", "Local Echo"));
     Node::get().command_echo(ReadBool("General", "Command Echo"));
     Node::get().full_names(ReadBool("General", "Full Names"));
     Node::get().front_delimiter(ReadBool("General", "Front Delimiter"));
+    Node::get().evasive_refresh(ReadBool("General", "Evasive Refresh"));
 
     CHAR observe_delay[MAX_STRING] = { 0 };
     strcpy_s(observe_delay, ReadVar("Observe Delay").c_str());
@@ -3169,6 +3222,7 @@ PLUGIN_API VOID ShutdownPlugin() {
     Node::get().unregister_command<MQ2DanNet::Query>();
     Node::get().unregister_command<MQ2DanNet::Observe>();
     Node::get().unregister_command<MQ2DanNet::Update>();
+    Node::get().unregister_command<MQ2DanNet::Reupdate>();
 
     RemoveCommand("/dnet");
     RemoveCommand("/djoin");
