@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7521 -- fixed erroneous default when a bad peer was specified
  * dannuic: version 0.7520 -- reverted change for query memoization and increased the default evasive timeout
  * dannuic: version 0.7519 -- fixed lock issues
  * dannuic: version 0.7518 -- removed shout elision to account for UDP dropped packets
@@ -71,7 +72,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7520);
+PLUGIN_VERSION(0.7521);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -2596,8 +2597,10 @@ BOOL dataDanNet(PCHAR Index, MQ2TYPEVAR& Dest) {
     if (Node::get().debugging())
         WriteChatf("MQ2DanNetType::dataDanNet Index %s", Index);
 
-    if (!Index || Index[0] == '\0' || !Node::get().has_peer(Index))
+    if (Index == nullptr || Index[0] == '\0')
         pDanNetType->SetPeer("");
+    else if (!Node::get().has_peer(Index))
+        return false;
     else
         pDanNetType->SetPeer(Node::get().get_full_name(Index));
 
