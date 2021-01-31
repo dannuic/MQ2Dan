@@ -1,5 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
  *
+ * dannuic: version 0.7522 -- added evasive refresh as an informational to the TLO
  * dannuic: version 0.7521 -- fixed erroneous default when a bad peer was specified
  * dannuic: version 0.7520 -- reverted change for query memoization and increased the default evasive timeout
  * dannuic: version 0.7519 -- fixed lock issues
@@ -73,7 +74,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7521);
+PLUGIN_VERSION(0.7522);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -2280,6 +2281,7 @@ public:
         Timeout,
         ObserveDelay,
         Evasive,
+		EvasiveRefresh,
         Expired,
         Keepalive,
         PeerCount,
@@ -2313,6 +2315,7 @@ public:
         TypeMember(Timeout);
         TypeMember(ObserveDelay);
         TypeMember(Evasive);
+        TypeMember(EvasiveRefresh);
         TypeMember(Expired);
         TypeMember(Keepalive);
         TypeMember(PeerCount);
@@ -2388,6 +2391,10 @@ public:
         case Evasive:
             Dest.DWord = Node::get().evasive();
             Dest.Type = mq::datatypes::pIntType;
+            return true;
+        case EvasiveRefresh:
+            Dest.DWord = Node::get().evasive_refresh();
+            Dest.Type = mq::datatypes::pBoolType;
             return true;
         case Expired:
             Dest.DWord = Node::get().expired();
