@@ -2246,7 +2246,7 @@ public:
         free(VarPtr.Ptr);
     }
 
-    bool FromData(MQVarPtr& VarPtr, MQTypeVar& Source) {
+    bool FromData(MQVarPtr& VarPtr, const MQTypeVar& Source) override {
         if (Source.Type == pDanObservationType) {
             memcpy(VarPtr.Ptr, Source.Ptr, sizeof(Node::Observation));
             return true;
@@ -2254,8 +2254,6 @@ public:
 
         return false;
     }
-
-    virtual bool FromString(MQVarPtr& VarPtr, const char* Source) override { return false; }
 };
 
 class MQ2DanNetType* pDanNetType = nullptr;
@@ -2614,9 +2612,6 @@ public:
         _peer.clear();
         return true;
     }
-
-    bool FromData(MQVarPtr& VarPtr, MQTypeVar& Source) { return false; }
-    virtual bool FromString(MQVarPtr& VarPtr, const char* Source) override { return false; }
 };
 
 bool dataDanNet(const char* Index, MQTypeVar& Dest) {
