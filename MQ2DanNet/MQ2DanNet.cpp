@@ -2542,7 +2542,15 @@ public:
             } else {
                 if (Index && Index[0] != '\0') {
                     auto observers = Node::get().observers(Node::get().trim_query(Index));
-                    strcpy_s(_buf, CreateArray(observers).c_str());
+                    std::set<std::string> out;
+                    if (Node::get().full_names())
+                        out = observers;
+                    else {
+                        std::transform(observers.cbegin(), observers.cend(), std::inserter(out, out.begin()), [](std::string s) -> std::string {
+                            return Node::get().get_short_name(s);
+                        });
+					}
+                    strcpy_s(_buf, CreateArray(out).c_str());
                 } else {
                     auto observers = Node::get().observer_queries();
                     strcpy_s(_buf, CreateArray(observers).c_str());
