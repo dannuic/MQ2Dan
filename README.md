@@ -147,3 +147,4 @@ Both `Observe and `Query` are their own data types, which provide a `Received` m
 ### Known Issues
 * Proper workgroup permissions are needed for different network groups across PC's (specifically windows 10 with windows 7 machines)
 * ZeroMQ has structural issues if something externally closes the TCP sockets that it is using for inter-process communication. If you are getting unexpected crashes after some time running, check your antivirus/firewall software to ensure that it's letting eqgame exist peacefully. Kaspersky is known to close these sockets.
+* If you are experiencing crashes loading MQ2Dannet or when zoning, check that your Windows 10 is v1903 or greater (Build 10.0.18362). The MQNext version of MQ2Dannet uses Unix sockets for IPC. Support for this was added to Windows 10 in 2018, but *after* the v1803 public release. As a result the stack crashes when setting up network communications. 
