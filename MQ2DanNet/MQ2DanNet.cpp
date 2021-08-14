@@ -524,7 +524,7 @@ private:
     const std::string observer_group(const unsigned int key);
     void queue_command(const std::string& command, std::stringstream&& args);
 
-    std::string _current_query; // for the Query data member
+    locked_map<Observed, Observation, ObservedCompare> _query_result_map; // maps query to result (for data access)
     Observation _query_result;
 
     locked_set<std::string> _rejoin_groups;
@@ -597,9 +597,10 @@ public:
     }
 
     // smartly reads/sets/clears _current_query
-    Observation query(const std::string& output, const std::string& query);
+    Observation query(const std::string& name, const std::string& query);
     Observation query();
-    void query_result(const Observation& obs);
+    void query_result(const std::string& name, const std::string& query, const Observation& obs);
+    void query_result(const std::string& name, const std::string& query);
     std::string trim_query(const std::string& query);
     std::string parse_query(const std::string& query);
     MQTypeVar parse_response(const std::string& output, const std::string& data);
@@ -1528,23 +1529,28 @@ MQ2DANNET_NODE_API std::set<std::string> MQ2DanNet::Node::observers(const std::s
 Node::Node() = default;
 Node::~Node() = default;
 
-Node::Observation MQ2DanNet::Node::query(const std::string& output, const std::string& query) {
+Node::Observation MQ2DanNet::Node::query(const std::string& name, const std::string& query){
+    // loop through results and find the entry where peer name and query matches
     std::string final_query = trim_query(query);
-
-    if (final_query.empty() || final_query != _current_query) {
-        _current_query = final_query;
-        _query_result = Observation(output);
-    }
-
-    return _query_result;
+    return _query_result_map.get(Observed(name, final_query));
 }
 
 Node::Observation MQ2DanNet::Node::query() {
+    // this function is purely for backwards compat with the previous macro-centric design
     return _query_result;
 }
 
-void MQ2DanNet::Node::query_result(const Observation& obs) {
-    _query_result = obs;
+void MQ2DanNet::Node::query_result(const std::string& name, const std::string& query, const Observation& obs) {
+    _query_result = obs; // store the latest result for easy compat with macros
+
+    // upsert a query from a peer
+    std::string final_query = trim_query(query);
+    _query_result_map.upsert(Observed(name, final_query), obs);
+}
+
+void MQ2DanNet::Node::query_result(const std::string& name, const std::string& query) {
+    // construct an empty observation and upsert
+    query_result(name, query, Observation());
 }
 
 std::string MQ2DanNet::Node::trim_query(const std::string& query) {
@@ -1853,7 +1859,7 @@ std::stringstream MQ2DanNet::Query::pack(const std::string& recipient, const std
     Archive<std::stringstream> send(send_stream);
 
     // now we make a callback for the Query command that sets the variable
-    auto f = [](std::stringstream&& args) -> bool {
+    auto f = [&request](std::stringstream&& args) -> bool {
         Archive<std::stringstream> ar(args);
         std::string from;
         std::string group;
@@ -1862,7 +1868,7 @@ std::stringstream MQ2DanNet::Query::pack(const std::string& recipient, const std
         try {
             ar >> from >> group >> data;
 
-            std::string output = Node::get().query().output;
+            std::string output = Node::get().query(from, request).output;
             MQTypeVar Result = Node::get().parse_response(output, data);
 
             // this actually only determines when the delay breaks.
@@ -1871,13 +1877,13 @@ std::stringstream MQ2DanNet::Query::pack(const std::string& recipient, const std
                 Result.Type->ToString(Result.VarPtr, szBuf);
             else
                 strcpy_s(szBuf, "NULL");
-            Node::get().query_result(Node::Observation(output, std::string(szBuf), MQGetTickCount64()));
+            Node::get().query_result(from, request, Node::Observation(output, std::string(szBuf), MQGetTickCount64()));
 
             if (Node::get().debugging()) {
                 if (Result.Type) {
                     CHAR szData[MAX_STRING] = { 0 };
                     Result.Type->ToString(Result.VarPtr, szData);
-                    WriteChatf("%s : %s -- %llu (%llu)", Result.Type->GetName(), szData, Node::get().query().received, MQGetTickCount64());
+                    WriteChatf("%s : %s -- %llu (%llu)", Result.Type->GetName(), szData, Node::get().query(from, request).received, MQGetTickCount64());
                 } else
                     WriteChatf("Failed to read data %s into %s at %llu.", data.c_str(), output.c_str(), MQGetTickCount64());
             }
@@ -2505,7 +2511,13 @@ public:
             return true;
         case Q:
         case Query:
-            _current_observation = Node::Observation(Node::get().query());
+            if (!local_peer.empty() && Index && Index[0] != '\0') {
+                // only allow indexed query access if both peer and query are specified
+                _current_observation = Node::Observation(Node::get().query(local_peer, Index));
+            } else {
+                // ignore all indexing and silently just provide the last result
+                _current_observation = Node::Observation(Node::get().query());
+            }
 
             if (_current_observation.received != 0) {
                 Dest.Ptr = &_current_observation;
@@ -2515,7 +2527,14 @@ public:
                 return false;
         case QReceived:
         case QueryReceived:
-            _current_observation = Node::Observation(Node::get().query());
+            if (!local_peer.empty() && Index && Index[0] != '\0') {
+                // only allow indexed query access if both peer and query are specified
+                _current_observation = Node::Observation(Node::get().query(local_peer, Index));
+            } else {
+                // ignore all indexing and silently just provide the last result
+                _current_observation = Node::Observation(Node::get().query());
+            }
+
             Dest.UInt64 = _current_observation.received;
             Dest.Type = mq::datatypes::pInt64Type;
             return true;
@@ -3142,10 +3161,10 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         else
             strcpy_s(szBuf, "NULL");
 
-        Node::get().query_result(Node::Observation(output, std::string(szBuf), MQGetTickCount64()));
+        Node::get().query_result(name, query, Node::Observation(output, std::string(szBuf), MQGetTickCount64()));
     } else {
         // reset the result so we can tell when we get a response. Needs to be done before the delay call.
-        Node::get().query_result(Node::Observation(output));
+        Node::get().query_result(name, query, Node::Observation(output));
 
         auto peers = Node::get().get_peers();
         if (peers.find(name) == peers.end()) {
@@ -3159,7 +3178,7 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         PCHARINFO pChar = GetCharInfo();
         if (pChar) {
             CHAR szDelay[MAX_STRING] = { 0 };
-            strcpy_s(szDelay, (timeout + " ${DanNet.QReceived}").c_str());
+            strcpy_s(szDelay, (timeout + " ${DanNet[" + name + "].QReceived[" + query + "]}").c_str());
             Delay(pChar->pSpawn, szDelay);
 
             Node::get().whisper<Query>(name, query);
