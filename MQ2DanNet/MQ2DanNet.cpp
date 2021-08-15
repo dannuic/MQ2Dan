@@ -600,7 +600,6 @@ public:
     Observation query(const std::string& name, const std::string& query);
     Observation query();
     void query_result(const std::string& name, const std::string& query, const Observation& obs);
-    void query_result(const std::string& name, const std::string& query);
     std::string trim_query(const std::string& query);
     std::string parse_query(const std::string& query);
     MQTypeVar parse_response(const std::string& output, const std::string& data);
@@ -1532,7 +1531,8 @@ Node::~Node() = default;
 Node::Observation MQ2DanNet::Node::query(const std::string& name, const std::string& query){
     // loop through results and find the entry where peer name and query matches
     std::string final_query = trim_query(query);
-    return _query_result_map.get(Observed(name, final_query));
+    std::string final_name = get_full_name(name);
+    return _query_result_map.get(Observed(final_name, final_query));
 }
 
 Node::Observation MQ2DanNet::Node::query() {
@@ -1545,12 +1545,8 @@ void MQ2DanNet::Node::query_result(const std::string& name, const std::string& q
 
     // upsert a query from a peer
     std::string final_query = trim_query(query);
-    _query_result_map.upsert(Observed(name, final_query), obs);
-}
-
-void MQ2DanNet::Node::query_result(const std::string& name, const std::string& query) {
-    // construct an empty observation and upsert
-    query_result(name, query, Observation());
+    std::string final_name = get_full_name(name);
+    _query_result_map.upsert(Observed(final_name, final_query), obs);
 }
 
 std::string MQ2DanNet::Node::trim_query(const std::string& query) {
@@ -1859,7 +1855,7 @@ std::stringstream MQ2DanNet::Query::pack(const std::string& recipient, const std
     Archive<std::stringstream> send(send_stream);
 
     // now we make a callback for the Query command that sets the variable
-    auto f = [&request](std::stringstream&& args) -> bool {
+    auto f = [request](std::stringstream&& args) -> bool {
         Archive<std::stringstream> ar(args);
         std::string from;
         std::string group;
