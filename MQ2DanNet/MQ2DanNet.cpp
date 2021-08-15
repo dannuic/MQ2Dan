@@ -1,41 +1,6 @@
 /* MQ2DanNet -- peer to peer auto-discovery networking plugin
- *
- * dannuic: version 0.7522 -- added evasive refresh as an informational to the TLO
- * dannuic: version 0.7521 -- fixed erroneous default when a bad peer was specified
- * dannuic: version 0.7520 -- reverted change for query memoization and increased the default evasive timeout
- * dannuic: version 0.7519 -- fixed lock issues
- * dannuic: version 0.7518 -- removed query memoization to account for dropped UDP traffic
- * dannuic: version 0.7517 -- fixed concurrency issues by only running setup/teardown on the main thread
- * dannuic: version 0.7516 -- fixed various iterator and reference related crashes
- * dannuic: version 0.7515 -- removed the signal sending to allow for thread shutdown during zoning
- * dannuic: version 0.7514 -- fixed an issue where variables that went out of scope wouldn't remove observers remotely
- * plure:   version 0.7513 -- added the ability for other plugin's to check if someone is connected to mq2dannet
- * dannuic: version 0.7512 -- added keepalive to main actor thread with configuration option for frequency, and added options for expire and evasive timeouts
- * dannuic: version 0.7511 -- fixed bug associated with high CPU usage (removed * default to interface) and made interface UI a little better
- * dannuic: version 0.7510 -- major reworking of observers to be way more efficient
- * dannuic: version 0.7506 -- fixed zoning with custom groups bug
- * dannuic: version 0.7505 -- changed observer TLO's (and fixed them), removed delay from `/dobs`, fixed major observer frequency bug
- * dannuic: version 0.7504 -- added zone channel, fixed Version TLO, expanded full names boolean
- * dannuic: version 0.7503 -- fixed group and raid bugs
- * dannuic: version 0.7502 -- allowed /dge in not-joined channels and added color parsing to tells
- * dannuic: version 0.7501 -- stability fix
- * dannuic: version 0.75 -- merged mutex branch into master
- * dannuic: version 0.7402 -- added some null checks to guard against crashes during crashes
- * dannuic: version 0.7401 -- test branch to add mutex operations for all shared resources
- * dannuic: version 0.74 -- fixed issue with auto group and auto raid with multiple groups in network
- * dannuic: version 0.73 -- added /dnet version
- * dannuic: version 0.72 -- corrected detection of "all" group echos/commands
- * dannuic: version 0.71 -- added auto raid channel join
- * dannuic: version 0.70 -- added auto group channel join
- * dannuic: version 0.61 -- fixed stability issue with strings.
- * dannuic: version 0.60 -- fixed stability issue with TLO returning address to local.
- * dannuic: version 0.51 -- added more handlers for thread exits that are not normally handled to ensure proper shutdown.
- * dannuic: version 0.5  -- added handlers for thread exits that are not normally handled to ensure proper shutdown.
- * dannuic: version 0.4  -- major potentialy stability fixes (to ensure we are never waiting on a recv in the main thread), added default group for all /dg commands as all
- * dannuic: version 0.3  -- revamped dquery, dobserve, and all TLO's
- * dannuic: version 0.2  -- Added parseable outputs and tracked peers/groups from underlying tech
- * dannuic: version 0.1  -- initial version, can set observers and perform queries, see README.md for more information
  */
+
 // MQ2DanNet.cpp : Defines the entry point for the DLL application.
 //
 
@@ -74,7 +39,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7522);
+PLUGIN_VERSION(0.7523);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
