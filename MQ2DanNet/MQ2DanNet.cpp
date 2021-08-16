@@ -3139,7 +3139,7 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         PCHARINFO pChar = GetCharInfo();
         if (pChar) {
             CHAR szDelay[MAX_STRING] = { 0 };
-            strcpy_s(szDelay, (timeout + " ${DanNet[" + name + "].QReceived[" + query + "]}").c_str());
+            strcpy_s(szDelay, (timeout + " ${DanNet[" + name + "].QReceived[\"" + query + "\"]}").c_str());
             Delay(pChar->pSpawn, szDelay);
 
             Node::get().whisper<Query>(name, query);
