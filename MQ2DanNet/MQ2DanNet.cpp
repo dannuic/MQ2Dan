@@ -39,7 +39,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7523);
+PLUGIN_VERSION(0.7524);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -3139,7 +3139,10 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
         PCHARINFO pChar = GetCharInfo();
         if (pChar) {
             CHAR szDelay[MAX_STRING] = { 0 };
-            strcpy_s(szDelay, (timeout + " ${DanNet[" + name + "].QReceived[\"" + query + "\"]}").c_str());
+            if (gParserVersion == 2)
+                strcpy_s(szDelay, (timeout + " ${DanNet[" + name + "].QReceived[${Parse[0,\"" + query + "\"]}]}").c_str());
+            else
+                strcpy_s(szDelay, (timeout + " ${DanNet[" + name + "].QReceived[\"" + query + "\"]}").c_str());
             Delay(pChar->pSpawn, szDelay);
 
             Node::get().whisper<Query>(name, query);
