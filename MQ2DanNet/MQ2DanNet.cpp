@@ -39,7 +39,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7524);
+PLUGIN_VERSION(0.7525);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -506,6 +506,7 @@ private:
     unsigned int _expired;
     unsigned __int64 _last_group_check;
     MQMacroBlock* _last_macro_check;
+    bool _show_groups;
 
     // explicitly prevent copy/move operations.
     Node(const Node&) = delete;
@@ -647,6 +648,12 @@ public:
         return _last_macro_check;
     }
     MQMacroBlock* last_macro_check() { return _last_macro_check; }
+
+    bool show_groups(bool show_groups) {
+        _show_groups = show_groups;
+        return _show_groups;
+    }
+    bool show_groups() { return _show_groups; }
 
     void save_channels();
 
@@ -1731,7 +1738,7 @@ const bool MQ2DanNet::Echo::callback(std::stringstream&& args) {
         from = Node::get().get_name(from);
         //DebugSpewAlways("ECHO --> FROM: %s, GROUP: %s, TEXT: %s", from.c_str(), group.c_str(), text.c_str());
 
-        if (group.empty())
+        if (group.empty() || !Node::get().show_groups())
             WriteChatf("\ax\a-t[\ax\at %s \ax\a-t]\ax \aw%s\ax", from.c_str(), text.c_str());
         else
             WriteChatf("\ax\a-t[\ax\at %s\ax\a-t (%s) ]\ax \aw%s\ax", from.c_str(), group.c_str(), text.c_str());
@@ -2072,6 +2079,8 @@ std::string GetDefault(std::string_view val) {
         return std::string("on");
     else if (val == "Front Delimiter")
         return std::string("off");
+    else if (val == "Show Groups")
+        return std::string("on");
     else if (val == "Observe Delay")
         return std::string("1000");
     else if (val == "Evasive")
@@ -2243,6 +2252,7 @@ public:
         CommandEcho,
         FullNames,
         FrontDelim,
+        ShowGroups,
         Timeout,
         ObserveDelay,
         Evasive,
@@ -2277,6 +2287,7 @@ public:
         TypeMember(CommandEcho);
         TypeMember(FullNames);
         TypeMember(FrontDelim);
+        TypeMember(ShowGroups);
         TypeMember(Timeout);
         TypeMember(ObserveDelay);
         TypeMember(Evasive);
@@ -2342,6 +2353,10 @@ public:
             return true;
         case FrontDelim:
             Dest.DWord = Node::get().front_delimiter();
+            Dest.Type = mq::datatypes::pBoolType;
+            return true;
+        case ShowGroups:
+            Dest.DWord = Node::get().show_groups();
             Dest.Type = mq::datatypes::pBoolType;
             return true;
         case Timeout:
@@ -2667,6 +2682,7 @@ void show_dnet_commands() {
     WriteChatf("           \aycommandecho [on|off]\ax -- turn commandecho on or off");
     WriteChatf("           \ayfullnames [on|off]\ax -- turn fullnames on or off");
     WriteChatf("           \ayfrontdelim [on|off]\ax -- turn front delimiters on or off");
+    WriteChatf("           \ayshowgroups [on|off]\ax -- show groups in /dgtell receive messages");
     WriteChatf("           \aytimeout [new_timeout]\ax -- set the /dquery timeout");
     WriteChatf("           \ayobservedelay [new_delay]\ax -- set the delay between observe sends in ms");
     WriteChatf("           \ayevasive [new_evasive]\ax -- set the evasive timeout in ms");
@@ -2715,6 +2731,9 @@ PLUGIN_API VOID DNetCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
                 SetVar("General", "Query Timeout", szParam);
             else
                 SetVar("General", "Query Timeout", GetDefault("Query Timeout"));
+        } else if (ci_equals(szParam, "showgroups")) {
+            GetArg(szParam, szLine, 2);
+            Node::get().show_groups(ParseBool("General", "Show Groups", szParam, Node::get().show_groups()));
         } else if (ci_equals(szParam, "observedelay")) {
             GetArg(szParam, szLine, 2);
             if (szParam[0] && IsNumber(szParam))
@@ -3168,6 +3187,7 @@ PLUGIN_API VOID InitializePlugin() {
     Node::get().command_echo(ReadBool("General", "Command Echo"));
     Node::get().full_names(ReadBool("General", "Full Names"));
     Node::get().front_delimiter(ReadBool("General", "Front Delimiter"));
+    Node::get().show_groups(ReadBool("General", "Show Groups"));
     Node::get().evasive_refresh(ReadBool("General", "Evasive Refresh"));
 
     CHAR observe_delay[MAX_STRING] = { 0 };
