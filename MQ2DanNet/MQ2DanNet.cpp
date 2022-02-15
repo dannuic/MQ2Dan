@@ -2392,13 +2392,13 @@ public:
                 auto group_it = _groups.cbegin();
                 std::advance(group_it, idx);
                 if (group_it != _groups.cend())
-                    Dest.DWord = Node::get().get_group_peers(*group_it).size();
+                    Dest.DWord = static_cast<uint32_t>(Node::get().get_group_peers(*group_it).size());
                 else
                     return false;
             } else if (Index && Index[0] != '\0') {
-                Dest.DWord = Node::get().get_group_peers(Node::init_string(Index)).size();
+                Dest.DWord = static_cast<uint32_t>(Node::get().get_group_peers(Node::init_string(Index)).size());
             } else {
-                Dest.DWord = Node::get().get_peers().size();
+                Dest.DWord = static_cast<uint32_t>(Node::get().get_peers().size());
             }
             Dest.Type = mq::datatypes::pIntType;
             return true;
@@ -2443,7 +2443,7 @@ public:
             return true;
         case GroupCount:
             _groups = Node::get().get_all_groups();
-            Dest.DWord = _groups.size();
+            Dest.DWord = static_cast<uint32_t>(_groups.size());
             Dest.Type = mq::datatypes::pIntType;
             return true;
         case Groups:
@@ -2465,7 +2465,7 @@ public:
             return true;
         case JoinedCount:
             _joined = Node::get().get_own_groups();
-            Dest.DWord = _groups.size();
+            Dest.DWord = static_cast<uint32_t>(_groups.size());
             Dest.Type = mq::datatypes::pIntType;
             return true;
         case Joined:
@@ -2558,9 +2558,9 @@ public:
         case OCount:
         case ObserveCount:
             if (!local_peer.empty()) {
-                Dest.DWord = Node::get().observed_count(local_peer);
+                Dest.DWord = static_cast<uint32_t>(Node::get().observed_count(local_peer));
             } else {
-                Dest.DWord = Node::get().observer_count();
+                Dest.DWord = static_cast<uint32_t>(Node::get().observer_count());
             }
             Dest.Type = mq::datatypes::pIntType;
             return true;

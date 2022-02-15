@@ -337,7 +337,7 @@ class Archive
 
         const Archive& operator&(const std::string& v) const
         {
-            uint32_t len = v.length();
+            size_t len = v.length();
             *this & len;
             m_stream.write(v.c_str(), len);
             return *this;
