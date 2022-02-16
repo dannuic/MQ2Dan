@@ -134,6 +134,7 @@
     <ClCompile Include="MQ2DanNet.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="deps\archive\archive.h" />
     <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
