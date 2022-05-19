@@ -899,7 +899,7 @@ MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_full_name(const std::s
     // this works because names and servers can't have underscores in them, therefore if
     // there is no underscore in the string, we assume a local character name was passed
     if (std::string::npos == name.find_last_of("_")) {
-        ret = EQADDR_SERVERNAME + std::string("_") + ret;
+        ret = GetServerShortName() + std::string("_") + ret;
     }
 
     return init_string(ret.c_str());
@@ -909,7 +909,7 @@ MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_short_name(const std::
     std::string ret = name;
     size_t pos = name.find_last_of("_");
 
-    if (pos != std::string::npos && name.find_first_of(EQADDR_SERVERNAME) != std::string::npos) {
+    if (pos != std::string::npos && name.find_first_of(GetServerShortName()) != std::string::npos) {
         ret = name.substr(pos + 1);
     }
 
