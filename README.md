@@ -108,7 +108,7 @@ Rather than adding peers to a group manually, you can use existing commands to a
   * `${DanNet.Peers}` -- all connected oeers
   * `${DanNet.Peers[${GroupName}]}` -- all peers in the ${GroupName} group
 * `GroupCount` -- number of all groups
-* `Groups` -- list of all groups
+* `Groups` -- list of all groups (this includes hidden groups used internally! use Joined if you want only groups that are visible)
 * `JoinedCount` -- number of joined groups
 * `Joined` -- list of joined groups
 * `O` `Observe` -- observe accessor, accessed like: `${DanNet[peer_name].Observe[query]}`
