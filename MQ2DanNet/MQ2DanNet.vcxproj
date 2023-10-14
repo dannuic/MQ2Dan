@@ -75,7 +75,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)deps\archive;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;CINTERFACE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
     <Link>
@@ -88,7 +88,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)deps\archive;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;CINTERFACE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
     <Link>
@@ -101,7 +101,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)deps\archive;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;CINTERFACE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <PostBuildEvent>
       <Command>
@@ -117,7 +117,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)deps\archive;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;CINTERFACE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>LOCAL_BUILD;ZMQ_STATIC;CZMQ_STATIC;ZYRE_STATIC;ZMQ_BUILD_DRAFT_API;CZMQ_BUILD_DRAFT_API;ZYRE_BUILD_DRAFT_API;MQ2DANNET_NODE_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <PostBuildEvent>
       <Command>
