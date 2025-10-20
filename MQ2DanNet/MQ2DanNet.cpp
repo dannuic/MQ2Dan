@@ -2407,6 +2407,8 @@ public:
                 if (_peers.empty())
                     _peers = Node::get().get_peers();
                 int idx = GetIntFromString(Index, 0) - 1;
+                if (idx < 0 || idx >= static_cast<int>(_peers.size()))
+                    return false;
                 auto peer_it = _peers.cbegin();
                 std::advance(peer_it, idx);
                 if (peer_it != _peers.cend()) {
