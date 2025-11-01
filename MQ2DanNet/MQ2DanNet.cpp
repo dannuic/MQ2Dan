@@ -211,9 +211,14 @@ private:
         std::vector<T> _vector;
 
     public:
-        void push_back(T& e) {
+        void push_back(const T& e) {
             std::scoped_lock<std::mutex> lock(_mutex);
             _vector.push_back(e);
+        }
+
+        void push_back(T&& e) {
+            std::scoped_lock<std::mutex> lock(_mutex);
+            _vector.push_back(std::move(e));
         }
 
         void remove_if(std::function<bool(T)> f) {
@@ -276,9 +281,10 @@ private:
 
     public:
         //emplace empty front pop
-        void emplace(T& e) {
+        template <class... Args>
+        void emplace(Args&&... args) {
             std::scoped_lock<std::mutex> lock(_mutex);
-            _queue.emplace_front(std::move(e));
+            _queue.emplace_front(std::forward<Args>(args)...);
         }
 
         T pop() {
