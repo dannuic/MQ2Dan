@@ -494,6 +494,7 @@ private:
     static void node_actor(zsock_t* pipe, void* args);
     const std::string observer_group(const unsigned int key);
     void queue_command(const std::string& command, std::stringstream&& args);
+    void enqueue_message(const std::string& command, zmsg_t* msg);
 
     locked_map<Observed, Observation, ObservedCompare> _query_result_map; // maps query to result (for data access)
     Observation _query_result;
@@ -1160,30 +1161,7 @@ void Node::node_actor(zsock_t* pipe, void* args) {
             } else if (streq(command, "PONG")) {
 				// TODO: we can potentially track keepalive responses, but for now let's just discard this
             } else {
-                zframe_t* body = zmsg_pop(msg);
-                char* name = zmsg_popstr(msg);
-                char* group = zmsg_popstr(msg);
-
-                if (body) {
-                    std::stringstream args;
-                    Archive<std::stringstream> args_ar(args);
-                    args_ar << std::string(name ? name : "") << std::string(group ? group : "");
-                    char* body_data = (char*)zframe_data(body);
-                    size_t body_size = zframe_size(body);
-
-                    args.write(body_data, body_size);
-
-                    node->queue_command(command, std::move(args));
-                } else {
-                    DebugSpewAlways("MQ2DanNet: Empty %s message in pipe handler: group %s, name %s, body %s.", command, group, name, body);
-                }
-
-                if (group)
-                    zstr_free(&group);
-                if (name)
-                    zstr_free(&name);
-                if (body)
-                    zframe_destroy(&body);
+                node->enqueue_message(command, msg);
             }
 
             if (command)
@@ -1268,7 +1246,12 @@ void Node::node_actor(zsock_t* pipe, void* args) {
                     DebugSpewAlways("MQ2DanNet: Got NULL WHISPER message from %s", name.c_str());
                 } else {
                     zmsg_addstr(message, name.c_str());
-                    zmsg_send(&message, node->_actor);
+                    char* command = zmsg_popstr(message);
+                    if (command) {
+                        node->enqueue_message(command, message);
+                        zstr_free(&command);
+                    }
+                    zmsg_destroy(&message);
                 }
             } else if (event_type == "SHOUT") {
                 // this presumes that group will return NULL if not a shot, which is valid in zyre if we don't set ZYRE_DEBUG or ZYRE_PEDANTIC
@@ -1285,7 +1268,12 @@ void Node::node_actor(zsock_t* pipe, void* args) {
                         // note that this goes to the end of the message
                         zmsg_addstr(message, name.c_str());
                         zmsg_addstr(message, group.c_str());
-                        zmsg_send(&message, node->_actor);
+                        char* command = zmsg_popstr(message);
+                        if (command) {
+                            node->enqueue_message(command, message);
+                            zstr_free(&command);
+                        }
+                        zmsg_destroy(&message);
                     }
                 }
             } else if (event_type == "EVASIVE" || event_type == "SILENT") {
@@ -1712,6 +1700,33 @@ void MQ2DanNet::Node::recv() {
 void Node::queue_command(const std::string& command, std::stringstream&& args) {
     // defer the actual lookup to the execution so we can handle commands that remove themselves
     _command_queue.emplace(std::make_pair(command, std::move(args)));
+}
+
+void Node::enqueue_message(const std::string& command, zmsg_t* msg) {
+    zframe_t* body = zmsg_pop(msg);
+    char* name = zmsg_popstr(msg);
+    char* group = zmsg_popstr(msg);
+
+    if (body) {
+        std::stringstream args;
+        Archive<std::stringstream> args_ar(args);
+        args_ar << std::string(name ? name : "") << std::string(group ? group : "");
+        char* body_data = (char*)zframe_data(body);
+        size_t body_size = zframe_size(body);
+
+        args.write(body_data, body_size);
+
+        queue_command(command, std::move(args));
+    } else {
+        DebugSpewAlways("MQ2DanNet: Empty %s message in pipe handler: group %s, name %s, body %s.", command.c_str(), group, name, body);
+    }
+
+    if (group)
+        zstr_free(&group);
+    if (name)
+        zstr_free(&name);
+    if (body)
+        zframe_destroy(&body);
 }
 
 const std::string MQ2DanNet::Node::observer_group(const unsigned int key) {
