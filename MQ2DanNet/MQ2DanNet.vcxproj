@@ -118,4 +118,12 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\plugins\pluginapi\pluginapi.vcxproj">
+      <Project>{70752189-b826-4e5d-816b-61b9147881cb}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\..\..\src\main\MQ2Main.vcxproj">
+      <Project>{2A0A06A4-E9C6-4229-82EE-BD2D4E0A7221}</Project>
+    </ProjectReference>
+  </ItemGroup>
 </Project>

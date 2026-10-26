@@ -169,17 +169,17 @@ public:
 
         _observer_map.foreach ([this, &updated_values, &stale_observers](std::pair<unsigned int, Query> observer) -> void {
             const auto tick = MQGetTickCount64();
-            std::string group = observer_group(observer.first);
+            const std::string group = observer_group(observer.first);
 
             // Peers never tell us when they stop observing, so drop a query once nobody has been in its
             // group for a minute instead of evaluating it every second for the rest of the session.
-            if (get_group_peers(group).empty()) {
+            if (!has_group_peers(group)) {
                 if (observer.second.empty_since == 0) {
-                    Query waiting(observer.second);
+                    Query waiting(std::move(observer.second));
                     waiting.empty_since = tick;
-                    updated_values[observer.first] = waiting;
+                    updated_values.emplace(observer.first, std::move(waiting));
                 } else if (tick - observer.second.empty_since > 60000) {
-                    stale_observers[observer.first] = observer.second.query;
+                    stale_observers.emplace(observer.first, std::move(observer.second.query));
                 }
                 return;
             }
@@ -192,22 +192,22 @@ public:
                     shout<T>(group, query_result, std::forward<Args>(args)...);
                 }
 
-                Query new_query(observer.second.query);
-
                 const auto proc_time = MQGetTickCount64() - tick;
-                if (observer.second.benchmark == 0)
+
+                Query new_query(std::move(observer.second));
+                if (new_query.benchmark == 0)
                     new_query.benchmark = proc_time;
                 else
-                    new_query.benchmark = static_cast<unsigned __int64>(0.5 * (observer.second.benchmark + proc_time));
+                    new_query.benchmark = static_cast<unsigned __int64>(0.5 * (new_query.benchmark + proc_time));
 
                 new_query.last = tick;
 
-                updated_values[observer.first] = new_query;
+                updated_values.emplace(observer.first, std::move(new_query));
             } else if (observer.second.empty_since != 0) {
                 // someone is observing again
-                Query listened(observer.second);
+                Query listened(std::move(observer.second));
                 listened.empty_since = 0;
-                updated_values[observer.first] = listened;
+                updated_values.emplace(observer.first, std::move(listened));
             }
         });
 
@@ -284,6 +284,11 @@ private:
         void erase(T e) {
             std::scoped_lock<std::mutex> lock(_mutex);
             _set.erase(e);
+        }
+
+        bool contains(const T& n) {
+            std::scoped_lock<std::mutex> lock(_mutex);
+            return _set.find(n) != _set.end();
         }
 
         T get_next(std::function<T(T)> f) {
@@ -600,6 +605,9 @@ public:
         return groups.find(group) != groups.end();
     }
 
+    // answers "is anyone in this group" without the two set copies get_group_peers() costs
+    MQ2DANNET_NODE_API bool has_group_peers(const std::string& group);
+
     // smartly reads/sets/clears _current_query
     Observation query(const std::string& name, const std::string& query);
     Observation query();
@@ -891,6 +899,10 @@ MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_group_peers(
     return peers;
 }
 
+MQ2DANNET_NODE_API bool MQ2DanNet::Node::has_group_peers(const std::string& group) {
+    return _peer_groups.contains(group) || _own_groups.contains(group);
+}
+
 MQ2DANNET_NODE_API const std::set<std::string> MQ2DanNet::Node::get_peer_groups(const std::string& peer) {
     std::set<std::string> groups;
 
@@ -944,15 +956,14 @@ MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_full_name(const std::s
 }
 
 MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_short_name(const std::string& name) {
-    std::string ret = name;
     // only strip our own server's prefix (find_first_of matched any single character of the server name)
-    const std::string prefix = init_string(GetServerShortName()) + "_";
+    const char* szServer = GetServerShortName();
+    const size_t server_len = szServer != nullptr ? strlen(szServer) : 0;
 
-    if (init_string(name.c_str()).rfind(prefix, 0) == 0) {
-        ret = name.substr(prefix.length());
-    }
+    if (server_len > 0 && name.length() > server_len && !_strnicmp(name.c_str(), szServer, server_len) && name[server_len] == '_')
+        return init_string(name.c_str() + server_len + 1);
 
-    return init_string(ret.c_str());
+    return init_string(name.c_str());
 }
 
 MQ2DANNET_NODE_API const std::string MQ2DanNet::Node::get_name(const std::string& name) {
@@ -1792,7 +1803,15 @@ void Node::queue_command(const std::string& command, std::stringstream&& args) {
 }
 
 const std::string MQ2DanNet::Node::observer_group(const unsigned int key) {
-    return _node_name + "_" + init_string(std::to_string(key).c_str());
+    char szKey[11] = { 0 }; // UINT_MAX is 10 digits
+    sprintf_s(szKey, "%u", key);
+
+    std::string group;
+    group.reserve(_node_name.length() + 1 + strlen(szKey));
+    group.append(_node_name);
+    group.push_back('_');
+    group.append(szKey);
+    return group;
 }
 
 void Node::do_next() {
@@ -3166,7 +3185,7 @@ PLUGIN_API VOID DObserveCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             // don't understand the switch, let's just fast-forward
             ++current_param;
         }
-    } while (szParam[0] && current_param <= 10); // was ||, which never ended once there were more than 10 arguments
+    } while (szParam[0]);
 
     if (drop && !name.empty()) {
         if (query.empty())
@@ -3224,7 +3243,7 @@ PLUGIN_API VOID DQueryCommand(PSPAWNINFO pSpawn, PCHAR szLine) {
             // don't understand the switch, let's just fast-forward
             ++current_param;
         }
-    } while (szParam[0] && current_param <= 10); // was ||, which never ended once there were more than 10 arguments
+    } while (szParam[0]);
 
     if (name.empty() || query.empty()) {
         WriteChatColor("Syntax: /dquery <name> [-q <query>] [-o <result>] [-t <timeout>] -- execute query on name and store return in result", USERCOLOR_DEFAULT);
