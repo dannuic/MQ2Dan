@@ -841,9 +841,6 @@ MQ2DANNET_NODE_API void Node::respond(const std::string& name, const std::string
     delete[] args_buf;
 }
 
-// Server short names can contain spaces, so names can too. MQ2's GetArg strips
-// surrounding quotes, so a quoted name is byte-for-byte what /djoin and friends need
-// -- unquoted, a space truncates it at the first space.
 static std::string quote_if_spaced(const std::string& name) {
     if (name.find_first_of(" \t") == std::string::npos)
         return name;
