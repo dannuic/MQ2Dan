@@ -40,7 +40,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7525);
+PLUGIN_VERSION(0.7600);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
