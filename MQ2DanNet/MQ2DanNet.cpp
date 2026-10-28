@@ -40,7 +40,7 @@
 #include <string>
 #include <mutex>
 
-PLUGIN_VERSION(0.7600);
+PLUGIN_VERSION(0.7601);
 PreSetup("MQ2DanNet");
 
 #pragma region NodeDefs
@@ -1336,16 +1336,17 @@ void Node::node_actor(zsock_t* pipe, void* args) {
             } else if (event_type == "EXIT") {
                 node->_connected_peers.erase(name);
 
-                std::map<std::string, std::set<std::string>> new_groups;
-                node->_peer_groups.foreach ([&name, &new_groups](const std::pair<std::string, std::set<std::string>>& group) -> void {
-                    std::set<std::string> new_set = group.second;
-                    if (new_set.erase(name) > 0) {
-                        new_groups[group.first] = new_set;
-                    }
+                std::set<std::string> left_groups;
+                node->_peer_groups.foreach ([&name, &left_groups](const std::pair<std::string, std::set<std::string>>& group) -> void {
+                    if (group.second.find(name) != group.second.end())
+                        left_groups.emplace(group.first);
                 });
 
-                for (auto it = new_groups.begin(); it != new_groups.end(); ++it) {
-                    node->_peer_groups.upsert(it->first, it->second);
+                for (const auto& group : left_groups) {
+                    node->_peer_groups.erase_if(group, [&name](std::set<std::string>& peers) -> bool {
+                        peers.erase(name);
+                        return peers.empty();
+                    });
                 }
 
                 //DebugSpewAlways("%s is EXITing.", name.c_str());
@@ -2091,20 +2092,23 @@ const bool MQ2DanNet::Update::callback(std::stringstream&& args) {
     try {
         received >> from >> group >> data;
         Node::get().remove_commands([from, group, &data](std::pair<std::string, std::stringstream>& command) -> bool {
-            if (command.first == Node::name<Update>()) {
-                std::istream recv_stream(command.second.rdbuf());
-                Archive<std::istream> recv(recv_stream);
-                std::string copy_from, copy_group, copy_data;
+            if (command.first != Node::name<Update>())
+                return false;
 
-                recv >> copy_from >> copy_group >> copy_data;
-                if (from == copy_from && group == copy_group) {
-                    //DebugSpewAlways("DROPPING EXTRA UPDATE --> FROM: %s, GROUP: %s", from.c_str(), group.c_str());
-                    data = copy_data;
-                    return true;
-                }
+            // reading moves the queued entry's read head -- put it back unless we're about to erase the entry
+            const std::streampos pos = command.second.tellg();
+            Archive<std::stringstream> recv(command.second);
+            std::string copy_from, copy_group;
+
+            recv >> copy_from >> copy_group;
+            if (from != copy_from || group != copy_group) {
+                command.second.seekg(pos);
+                return false;
             }
 
-            return false;
+            //DebugSpewAlways("DROPPING EXTRA UPDATE --> FROM: %s, GROUP: %s", from.c_str(), group.c_str());
+            recv >> data;
+            return true;
         });
 
         //DebugSpewAlways("UPDATE --> FROM: %s, GROUP: %s, DATA: %s", from.c_str(), group.c_str(), data.c_str());
